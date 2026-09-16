@@ -257,7 +257,7 @@ def make_row(
         "text_y":          (FloatRow, {"min_val": 0.0, "max_val": 1.0}),
         "box_height":      (FloatRow, {"min_val": 0.0, "max_val": 1.0}),
         # combo fields
-        "image_fit":       (ComboRow, {"options": ["fill", "fit", "stretch", "center"]}),
+        "image_fit":       (ComboRow, {"options": ["fill", "zoom", "fit", "stretch", "center"]}),
         "text_transform":  (ComboRow, {"options": ["none", "upper", "lower", "title"]}),
         "text_align":      (ComboRow, {"options": ["left", "center", "right"]}),
         "box_position":    (ComboRow, {"options": ["bottom", "top", "full"]}),

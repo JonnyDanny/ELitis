@@ -86,34 +86,66 @@ def _load_background(item: ThumbnailItem, project: Project, cfg: ResolvedSetting
 
 
 def _apply_framing(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
+    """
+    Pipeline
+    --------
+    1. Apply the crop rect (for fill / zoom modes) to select a source region.
+    2. Apply the fit mode to resize / position that region into the output canvas.
+
+    fill  – crop rect is AR-matched to output (enforced by FramingCanvas UI);
+            the cropped region is stretched to fill the canvas exactly.
+    zoom  – crop rect is freehand; the region is scaled to *fit within* the
+            canvas (letterboxed), preserving source AR — no pixel distortion.
+    fit   – whole source image, letterboxed to fit canvas.
+    stretch – whole source image, stretched to fill canvas exactly.
+    center  – whole source image at native resolution, pasted centered.
+    """
     W, H = cfg.canvas_width, cfg.canvas_height
-    iw, ih = img.size
     fit = cfg.image_fit
 
-    if fit == "stretch":
+    # --- Step 1: crop to selected region (fill and zoom modes) ---
+    cx, cy, cw, ch = cfg.crop_x, cfg.crop_y, cfg.crop_w, cfg.crop_h
+    if fit in ('fill', 'zoom') and not (cx == 0 and cy == 0 and cw == 1 and ch == 1):
+        iw, ih = img.size
+        px = int(cx * iw)
+        py = int(cy * ih)
+        pw = max(1, int(cw * iw))
+        ph = max(1, int(ch * ih))
+        img = img.crop((px, py, px + pw, py + ph))
+
+    iw, ih = img.size
+
+    # --- Step 2: fit mode ---
+    if fit == 'fill':
+        # Crop is AR-matched; stretch fills canvas with no letterboxing.
         return img.resize((W, H), Image.Resampling.LANCZOS)
 
-    if fit == "fill":
-        scale = max(W / iw, H / ih)
-        nw, nh = int(iw * scale), int(ih * scale)
-        img = img.resize((nw, nh), Image.Resampling.LANCZOS)
-        x, y = (nw - W) // 2, (nh - H) // 2
-        img = img.crop((x, y, x + W, y + H))
-        return img
-
-    if fit == "fit":
+    if fit == 'zoom':
+        # Freehand crop; scale to fit within canvas (letterbox if AR differs).
         scale = min(W / iw, H / ih)
-        nw, nh = int(iw * scale), int(ih * scale)
+        nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
         img = img.resize((nw, nh), Image.Resampling.LANCZOS)
         canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
-        ox, oy = (W - nw) // 2, (H - nh) // 2
-        canvas.paste(img, (ox, oy))
+        canvas.paste(img, ((W - nw) // 2, (H - nh) // 2))
         return canvas
 
-    # center: no scaling, just center-crop or pad
+    if fit == 'stretch':
+        return img.resize((W, H), Image.Resampling.LANCZOS)
+
+    if fit == 'fit':
+        scale = min(W / iw, H / ih)
+        nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
+        img = img.resize((nw, nh), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+        canvas.paste(img, ((W - nw) // 2, (H - nh) // 2))
+        return canvas
+
+    # center: native resolution, pasted centered (edges may be clipped)
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
-    ox, oy = max(0, (W - iw) // 2), max(0, (H - ih) // 2)
-    sx, sy = max(0, (iw - W) // 2), max(0, (ih - H) // 2)
+    ox = max(0, (W - iw) // 2)
+    oy = max(0, (H - ih) // 2)
+    sx = max(0, (iw - W) // 2)
+    sy = max(0, (ih - H) // 2)
     paste_w = min(iw - sx, W - ox)
     paste_h = min(ih - sy, H - oy)
     canvas.paste(img.crop((sx, sy, sx + paste_w, sy + paste_h)), (ox, oy))
