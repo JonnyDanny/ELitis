@@ -20,7 +20,7 @@ from PySide6.QtGui import QPixmap
 
 from elitis.ui.app_state import AppState
 from elitis.ui.widgets.framing_canvas import FramingCanvas
-from elitis.ui.widgets.setting_row import make_row, SettingRow
+from elitis.ui.widgets.setting_row import make_row, SettingRow, RowContext
 
 
 _MODES = [
@@ -147,9 +147,9 @@ class FramingTab(QWidget):
         sl.setSpacing(4)
         item    = self._state.current_item
         phantom = self._state.phantom
+        ctx = RowContext(is_phantom=item.is_phantom)
         for label, field in (("Width", "canvas_width"), ("Height", "canvas_height")):
-            row = make_row(label, field, item.settings, phantom.settings,
-                           is_phantom_item=item.is_phantom)
+            row = make_row(label, field, item.settings, phantom.settings, ctx=ctx)
             row.changed.connect(self._on_canvas_size_changed)
             sl.addWidget(row)
             self._rows.append(row)
@@ -204,12 +204,10 @@ class FramingTab(QWidget):
         self._update_crop_label(cfg.crop_x, cfg.crop_y, cfg.crop_w, cfg.crop_h)
 
         # Switch setting rows to new item
+        ctx = RowContext(is_phantom=item.is_phantom)
         for row in self._rows:
-            row.switch_item(
-                item.settings.get(row.field_name),
-                phantom.settings.get(row.field_name),
-                is_phantom_item=item.is_phantom,
-            )
+            row.apply_context(ctx)
+            row.switch_item(item.settings.get(row.field_name), phantom.settings.get(row.field_name))
 
     def _set_mode(self, mode: str, emit: bool = True):
         for key, btn in self._mode_btns.items():

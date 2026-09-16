@@ -11,6 +11,7 @@ as the item's starting value so edits feel continuous.
 Factory function `make_row()` returns the appropriate subclass for each value type.
 """
 from __future__ import annotations
+from dataclasses import dataclass, field
 from typing import Any, Callable
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QCheckBox, QSpinBox,
@@ -22,16 +23,25 @@ from elitis.core.models import SF
 from elitis.ui.widgets.color_button import ColorButton
 
 
+@dataclass
+class RowContext:
+    """
+    Display context for a SettingRow — describes the *kind* of item currently shown,
+    not the data itself.  Add new flags here; no function signatures need to change.
+    """
+    is_phantom: bool = False   # phantom has no defaults to inherit from — hide the toggle
+
+
 class SettingRow(QWidget):
     """Base class. Subclasses implement _build_control() and _read_control()/_write_control()."""
     changed = Signal()   # emitted whenever the SF changes (value or use_phantom)
     field_name: str = ""  # set by make_row()
 
-    def __init__(self, label: str, item_sf: SF, phantom_sf: SF,
-                 is_phantom_item: bool = False, parent=None):
+    def __init__(self, label: str, item_sf: SF, phantom_sf: SF, parent=None):
         super().__init__(parent)
         self._item_sf = item_sf
         self._phantom_sf = phantom_sf
+        self._ctx = RowContext()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
@@ -57,7 +67,12 @@ class SettingRow(QWidget):
         layout.addStretch()
 
         self._refresh_state()
-        self._toggle.setVisible(not is_phantom_item)
+
+    def apply_context(self, ctx: RowContext):
+        """Apply display context (what kind of item this is) without touching SF data."""
+        self._ctx = ctx
+        self._toggle.setVisible(not ctx.is_phantom)
+        # Future context fields go here — no callers need to change
 
     # ------------------------------------------------------------------
     # Subclass interface
@@ -108,13 +123,11 @@ class SettingRow(QWidget):
         if self._item_sf.use_phantom:
             self._write_control(self._phantom_sf.value)
 
-    def switch_item(self, item_sf: SF, phantom_sf: SF | None = None,
-                    *, is_phantom_item: bool = False):
-        """Switch to a different item's SF (when user navigates to another item)."""
+    def switch_item(self, item_sf: SF, phantom_sf: SF | None = None):
+        """Switch to a different item's SF.  Context is unchanged — call apply_context separately."""
         self._item_sf = item_sf
         if phantom_sf is not None:
             self._phantom_sf = phantom_sf
-        self._toggle.setVisible(not is_phantom_item)
         self._refresh_state()
 
 
@@ -123,11 +136,10 @@ class SettingRow(QWidget):
 # ---------------------------------------------------------------------------
 
 class IntRow(SettingRow):
-    def __init__(self, label, item_sf, phantom_sf, min_val=0, max_val=9999,
-                 is_phantom_item=False, parent=None):
+    def __init__(self, label, item_sf, phantom_sf, min_val=0, max_val=9999, parent=None):
         self._min = min_val
         self._max = max_val
-        super().__init__(label, item_sf, phantom_sf, is_phantom_item, parent)
+        super().__init__(label, item_sf, phantom_sf, parent)
 
     def _build_control(self):
         sb = QSpinBox()
@@ -146,12 +158,12 @@ class IntRow(SettingRow):
 
 class FloatRow(SettingRow):
     def __init__(self, label, item_sf, phantom_sf, min_val=0.0, max_val=1.0,
-                 decimals=2, step=0.01, is_phantom_item=False, parent=None):
+                 decimals=2, step=0.01, parent=None):
         self._min = min_val
         self._max = max_val
         self._dec = decimals
         self._step = step
-        super().__init__(label, item_sf, phantom_sf, is_phantom_item, parent)
+        super().__init__(label, item_sf, phantom_sf, parent)
 
     def _build_control(self):
         sb = QDoubleSpinBox()
@@ -171,10 +183,9 @@ class FloatRow(SettingRow):
 
 
 class ComboRow(SettingRow):
-    def __init__(self, label, item_sf, phantom_sf, options: list[str],
-                 is_phantom_item=False, parent=None):
+    def __init__(self, label, item_sf, phantom_sf, options: list[str], parent=None):
         self._options = options
-        super().__init__(label, item_sf, phantom_sf, is_phantom_item, parent)
+        super().__init__(label, item_sf, phantom_sf, parent)
 
     def _build_control(self):
         cb = QComboBox()
@@ -231,7 +242,7 @@ def make_row(
     field_name: str,
     item_settings,
     phantom_settings,
-    is_phantom_item: bool = False,
+    ctx: RowContext | None = None,
     **kwargs,
 ) -> SettingRow:
     """
@@ -284,6 +295,8 @@ def make_row(
     if cls is None:
         raise ValueError(f"No SettingRow type registered for field '{field_name}'")
     merged = {**defaults, **kwargs}
-    row = cls(label, item_sf, phantom_sf, is_phantom_item=is_phantom_item, **merged)
+    row = cls(label, item_sf, phantom_sf, **merged)
     row.field_name = field_name
+    if ctx is not None:
+        row.apply_context(ctx)
     return row
