@@ -148,7 +148,8 @@ class FramingTab(QWidget):
         item    = self._state.current_item
         phantom = self._state.phantom
         for label, field in (("Width", "canvas_width"), ("Height", "canvas_height")):
-            row = make_row(label, field, item.settings, phantom.settings)
+            row = make_row(label, field, item.settings, phantom.settings,
+                           is_phantom_item=item.is_phantom)
             row.changed.connect(self._on_canvas_size_changed)
             sl.addWidget(row)
             self._rows.append(row)
@@ -207,6 +208,7 @@ class FramingTab(QWidget):
             row.switch_item(
                 item.settings.get(row.field_name),
                 phantom.settings.get(row.field_name),
+                is_phantom_item=item.is_phantom,
             )
 
     def _set_mode(self, mode: str, emit: bool = True):

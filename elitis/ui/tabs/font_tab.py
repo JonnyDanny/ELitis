@@ -111,7 +111,8 @@ class FontTab(QWidget):
         item    = self._state.current_item
         phantom = self._state.phantom
         for label, field_name in fields:
-            row = make_row(label, field_name, item.settings, phantom.settings)
+            row = make_row(label, field_name, item.settings, phantom.settings,
+                           is_phantom_item=item.is_phantom)
             row.changed.connect(self._state.notify_settings_changed)
             vbox.addWidget(row)
             self._rows.append(row)
@@ -143,6 +144,7 @@ class FontTab(QWidget):
             row.switch_item(
                 item.settings.get(row.field_name),
                 phantom.settings.get(row.field_name),
+                is_phantom_item=item.is_phantom,
             )
         # Sync font list selection
         font_name = item.settings.get("font_name").value
@@ -159,6 +161,7 @@ class FontTab(QWidget):
         # Update the font_name row control
         for row in self._rows:
             if row.field_name == "font_name":
-                row.switch_item(item_sf, self._state.phantom.settings.get("font_name"))
+                row.switch_item(item_sf, self._state.phantom.settings.get("font_name"),
+                                is_phantom_item=self._state.current_item.is_phantom)
                 break
         self._state.notify_settings_changed()

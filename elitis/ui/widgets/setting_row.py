@@ -27,7 +27,8 @@ class SettingRow(QWidget):
     changed = Signal()   # emitted whenever the SF changes (value or use_phantom)
     field_name: str = ""  # set by make_row()
 
-    def __init__(self, label: str, item_sf: SF, phantom_sf: SF, parent=None):
+    def __init__(self, label: str, item_sf: SF, phantom_sf: SF,
+                 is_phantom_item: bool = False, parent=None):
         super().__init__(parent)
         self._item_sf = item_sf
         self._phantom_sf = phantom_sf
@@ -36,7 +37,7 @@ class SettingRow(QWidget):
         layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(8)
 
-        # Phantom toggle
+        # Phantom toggle — hidden when editing the phantom itself (it IS the source)
         self._toggle = QCheckBox()
         self._toggle.setToolTip("☁  Use phantom default")
         self._toggle.setFixedWidth(18)
@@ -56,6 +57,7 @@ class SettingRow(QWidget):
         layout.addStretch()
 
         self._refresh_state()
+        self._toggle.setVisible(not is_phantom_item)
 
     # ------------------------------------------------------------------
     # Subclass interface
@@ -106,11 +108,13 @@ class SettingRow(QWidget):
         if self._item_sf.use_phantom:
             self._write_control(self._phantom_sf.value)
 
-    def switch_item(self, item_sf: SF, phantom_sf: SF | None = None):
+    def switch_item(self, item_sf: SF, phantom_sf: SF | None = None,
+                    *, is_phantom_item: bool = False):
         """Switch to a different item's SF (when user navigates to another item)."""
         self._item_sf = item_sf
         if phantom_sf is not None:
             self._phantom_sf = phantom_sf
+        self._toggle.setVisible(not is_phantom_item)
         self._refresh_state()
 
 
@@ -119,10 +123,11 @@ class SettingRow(QWidget):
 # ---------------------------------------------------------------------------
 
 class IntRow(SettingRow):
-    def __init__(self, label, item_sf, phantom_sf, min_val=0, max_val=9999, parent=None):
+    def __init__(self, label, item_sf, phantom_sf, min_val=0, max_val=9999,
+                 is_phantom_item=False, parent=None):
         self._min = min_val
         self._max = max_val
-        super().__init__(label, item_sf, phantom_sf, parent)
+        super().__init__(label, item_sf, phantom_sf, is_phantom_item, parent)
 
     def _build_control(self):
         sb = QSpinBox()
@@ -141,12 +146,12 @@ class IntRow(SettingRow):
 
 class FloatRow(SettingRow):
     def __init__(self, label, item_sf, phantom_sf, min_val=0.0, max_val=1.0,
-                 decimals=2, step=0.01, parent=None):
+                 decimals=2, step=0.01, is_phantom_item=False, parent=None):
         self._min = min_val
         self._max = max_val
         self._dec = decimals
         self._step = step
-        super().__init__(label, item_sf, phantom_sf, parent)
+        super().__init__(label, item_sf, phantom_sf, is_phantom_item, parent)
 
     def _build_control(self):
         sb = QDoubleSpinBox()
@@ -166,9 +171,10 @@ class FloatRow(SettingRow):
 
 
 class ComboRow(SettingRow):
-    def __init__(self, label, item_sf, phantom_sf, options: list[str], parent=None):
+    def __init__(self, label, item_sf, phantom_sf, options: list[str],
+                 is_phantom_item=False, parent=None):
         self._options = options
-        super().__init__(label, item_sf, phantom_sf, parent)
+        super().__init__(label, item_sf, phantom_sf, is_phantom_item, parent)
 
     def _build_control(self):
         cb = QComboBox()
@@ -225,6 +231,7 @@ def make_row(
     field_name: str,
     item_settings,
     phantom_settings,
+    is_phantom_item: bool = False,
     **kwargs,
 ) -> SettingRow:
     """
@@ -277,6 +284,6 @@ def make_row(
     if cls is None:
         raise ValueError(f"No SettingRow type registered for field '{field_name}'")
     merged = {**defaults, **kwargs}
-    row = cls(label, item_sf, phantom_sf, **merged)
+    row = cls(label, item_sf, phantom_sf, is_phantom_item=is_phantom_item, **merged)
     row.field_name = field_name
     return row
