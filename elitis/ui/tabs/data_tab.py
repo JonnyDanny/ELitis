@@ -251,8 +251,16 @@ class DataTab(QWidget):
         current_content_row = self._state.current_index - 1
         if row != current_content_row:
             cur = self._state.current_item
-            if not cur.is_phantom and not self._state.is_clean(cur.id):
-                guard = self._navigation_guard(cur.label or f"Item {current_content_row + 1}")
+            # Phantom dirty: ALL inheriting items are stale — qualitatively different
+            # from a single item being dirty, so guard on both but with distinct text.
+            cur_is_dirty = (
+                cur.is_phantom and self._state.phantom_dirty
+            ) or (
+                not cur.is_phantom and not self._state.is_clean(cur.id)
+            )
+            if cur_is_dirty:
+                name = "Default template" if cur.is_phantom else (cur.label or f"Item {current_content_row + 1}")
+                guard = self._navigation_guard(name, is_phantom=cur.is_phantom)
                 if guard == "cancel":
                     return
                 if guard == "preview":
@@ -287,17 +295,28 @@ class DataTab(QWidget):
         self._table.blockSignals(False)
         self._state.notify_settings_changed()
 
-    def _navigation_guard(self, label: str) -> str:
+    def _navigation_guard(self, label: str, *, is_phantom: bool = False) -> str:
         """
         Ask what to do when navigating away from a dirty item as a side-effect.
         Returns 'cancel', 'preview', or 'continue'.
+
+        is_phantom=True uses stronger wording because phantom changes propagate
+        to every item that inherits a default — not just one item left unrendered.
         """
         msg = QMessageBox(self)
-        msg.setWindowTitle("Changes not yet previewed")
-        msg.setText(
-            f'"{label}" has changes that haven\'t been previewed.\n\n'
-            "Switching now will leave those changes without a preview until you return."
-        )
+        if is_phantom:
+            msg.setWindowTitle("Default template has unsaved changes")
+            msg.setText(
+                "The default template has been modified.\n\n"
+                "These changes propagate to every item using default values — "
+                "switching now means no item will have a rendered preview of the new defaults."
+            )
+        else:
+            msg.setWindowTitle("Changes not yet previewed")
+            msg.setText(
+                f'"{label}" has changes that haven\'t been previewed.\n\n'
+                "Switching now will leave this item without an up-to-date render until you return."
+            )
         msg.setInformativeText(
             "Generate preview — stay here, render the current state, cancel the switch.\n"
             "Continue — switch anyway (changes are kept but not rendered).\n"

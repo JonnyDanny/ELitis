@@ -90,6 +90,8 @@ class AppState(QObject):
         self._pending_render: Optional[_RenderTask] = None
         # IDs of items whose last export is still current (not dirtied since)
         self._clean_ids: set[str] = set()
+        # True if the phantom's settings were changed since last project load/new
+        self._phantom_dirty: bool = False
 
     # ------------------------------------------------------------------
     # Font manager
@@ -153,7 +155,11 @@ class AppState(QObject):
     # ------------------------------------------------------------------
 
     def notify_settings_changed(self):
-        self._clean_ids.discard(self.current_item.id)
+        cur = self.current_item
+        if cur.is_phantom:
+            self._phantom_dirty = True
+        else:
+            self._clean_ids.discard(cur.id)
         self.settings_changed.emit()
         self.request_preview()
         self.items_status_changed.emit()
@@ -161,6 +167,11 @@ class AppState(QObject):
     def is_clean(self, item_id: str) -> bool:
         """True if the item has been exported and not changed since."""
         return item_id in self._clean_ids
+
+    @property
+    def phantom_dirty(self) -> bool:
+        """True if the phantom's settings changed since the last project load/new."""
+        return self._phantom_dirty
 
     def mark_rendered(self, item_id: str):
         self._clean_ids.add(item_id)
@@ -240,6 +251,7 @@ class AppState(QObject):
         self._project_path = None
         self._current_index = 0
         self._clean_ids.clear()
+        self._phantom_dirty = False
         self.project_replaced.emit()
         self.current_changed.emit(0)
         self.request_preview()
@@ -262,6 +274,7 @@ class AppState(QObject):
         self._project_path = path
         self._current_index = min(1, len(self._project.items) - 1)
         self._clean_ids.clear()
+        self._phantom_dirty = False
         self._font_manager.scan()
         self.project_replaced.emit()
         self.current_changed.emit(self._current_index)
