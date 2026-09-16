@@ -1,9 +1,9 @@
 """
 Data model for ELItis.
 
-Every visual setting is wrapped in a SettingField (SF). When use_phantom=True the
+Every visual setting is wrapped in a SettingField (SF). When use_default=True the
 rendering engine substitutes the phantom item's value instead of this item's own.
-The phantom item (items[0]) always has use_phantom=False on every field — it IS the
+The phantom item (items[0]) always has use_default=False on every field — it IS the
 source of defaults.
 """
 from __future__ import annotations
@@ -21,10 +21,10 @@ import uuid
 class SF:
     """A setting value with an optional "use phantom" flag."""
     value: Any
-    use_phantom: bool = True
+    use_default: bool = True
 
     def resolve(self, phantom_value: Any) -> Any:
-        return phantom_value if self.use_phantom else self.value
+        return phantom_value if self.use_default else self.value
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ PHANTOM_DEFAULTS: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 def _sf(key: str) -> SF:
-    return SF(value=PHANTOM_DEFAULTS[key], use_phantom=True)
+    return SF(value=PHANTOM_DEFAULTS[key], use_default=True)
 
 
 @dataclass
@@ -129,11 +129,11 @@ class ItemSettings:
     def get(self, name: str) -> SF:
         return getattr(self, name)
 
-    def set_value(self, name: str, value: Any, use_phantom: bool | None = None):
+    def set_value(self, name: str, value: Any, use_default: bool | None = None):
         sf: SF = getattr(self, name)
         sf.value = value
-        if use_phantom is not None:
-            sf.use_phantom = use_phantom
+        if use_default is not None:
+            sf.use_default = use_default
 
     def field_names(self) -> list[str]:
         return [f.name for f in dc_fields(self)]
@@ -180,12 +180,12 @@ class ResolvedSettings:
 
 
 def resolve(item: ItemSettings, phantom: ItemSettings) -> ResolvedSettings:
-    """Build a ResolvedSettings by substituting phantom values where use_phantom=True."""
+    """Build a ResolvedSettings by substituting phantom values where use_default=True."""
     kwargs = {}
     for f in dc_fields(item):
         item_sf: SF = getattr(item, f.name)
         phantom_sf: SF = getattr(phantom, f.name)
-        kwargs[f.name] = phantom_sf.value if item_sf.use_phantom else item_sf.value
+        kwargs[f.name] = phantom_sf.value if item_sf.use_default else item_sf.value
     return ResolvedSettings(**kwargs)
 
 
@@ -205,7 +205,7 @@ class ThumbnailItem:
     def make_phantom(cls) -> ThumbnailItem:
         s = ItemSettings()
         for f in dc_fields(s):
-            getattr(s, f.name).use_phantom = False
+            getattr(s, f.name).use_default = False
         return cls(id="__phantom__", label="", image_path=None, settings=s, is_phantom=True)
 
     @classmethod

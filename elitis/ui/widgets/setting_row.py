@@ -1,9 +1,9 @@
 """
 SettingRow — a labeled control that wraps a single SF (SettingField).
 
-The phantom toggle (☁ icon) lets the user switch between:
-  - use_phantom=True  → inherit from phantom (control shows phantom value, grayed out)
-  - use_phantom=False → item-specific override (control is active)
+The default toggle (☁ icon) lets the user switch between:
+  - use_default=True  → inherit the project default (control shows default value, grayed out)
+  - use_default=False → item-specific override (control is active)
 
 When switching TO override for the first time, the phantom's current value is copied
 as the item's starting value so edits feel continuous.
@@ -34,7 +34,7 @@ class RowContext:
 
 class SettingRow(QWidget):
     """Base class. Subclasses implement _build_control() and _read_control()/_write_control()."""
-    changed = Signal()   # emitted whenever the SF changes (value or use_phantom)
+    changed = Signal()   # emitted whenever the SF changes (value or use_default)
     field_name: str = ""  # set by make_row()
 
     def __init__(self, label: str, item_sf: SF, phantom_sf: SF, parent=None):
@@ -49,9 +49,9 @@ class SettingRow(QWidget):
 
         # Phantom toggle — hidden when editing the phantom itself (it IS the source)
         self._toggle = QCheckBox()
-        self._toggle.setToolTip("☁  Use phantom default")
+        self._toggle.setToolTip("☁  Use project default")
         self._toggle.setFixedWidth(18)
-        self._toggle.setChecked(item_sf.use_phantom)
+        self._toggle.setChecked(item_sf.use_default)
         self._toggle.stateChanged.connect(self._on_toggle)
         layout.addWidget(self._toggle)
 
@@ -94,33 +94,33 @@ class SettingRow(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_state(self):
-        using_phantom = self._item_sf.use_phantom
+        using_default = self._item_sf.use_default
         self._toggle.blockSignals(True)
-        self._toggle.setChecked(using_phantom)
+        self._toggle.setChecked(using_default)
         self._toggle.blockSignals(False)
-        self._control.setEnabled(not using_phantom)
-        if using_phantom:
+        self._control.setEnabled(not using_default)
+        if using_default:
             self._write_control(self._phantom_sf.value)
         else:
             self._write_control(self._item_sf.value)
 
     def _on_toggle(self, state):
-        use_phantom = bool(state)
-        if not use_phantom and self._item_sf.use_phantom:
-            # First time enabling override: seed with phantom's value
+        use_default = bool(state)
+        if not use_default and self._item_sf.use_default:
+            # First time enabling override: seed with the current default value
             self._item_sf.value = self._phantom_sf.value
-        self._item_sf.use_phantom = use_phantom
+        self._item_sf.use_default = use_default
         self._refresh_state()
         self.changed.emit()
 
     def _on_control_changed(self):
-        if not self._item_sf.use_phantom:
+        if not self._item_sf.use_default:
             self._item_sf.value = self._read_control()
             self.changed.emit()
 
     def refresh_phantom(self):
         """Call when phantom value changes so grayed display updates."""
-        if self._item_sf.use_phantom:
+        if self._item_sf.use_default:
             self._write_control(self._phantom_sf.value)
 
     def switch_item(self, item_sf: SF, phantom_sf: SF | None = None):

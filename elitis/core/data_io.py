@@ -33,14 +33,16 @@ def _sf_to_dict(sf: SF) -> dict:
     v = sf.value
     if isinstance(v, tuple):
         v = list(v)
-    return {"value": v, "use_phantom": sf.use_phantom}
+    return {"value": v, "use_default": sf.use_default}
 
 
 def _sf_from_dict(d: dict, default_key: str) -> SF:
     v = d.get("value", PHANTOM_DEFAULTS.get(default_key))
     if isinstance(v, list):
         v = tuple(v)
-    return SF(value=v, use_phantom=d.get("use_phantom", True))
+    # "use_phantom" is the old key name — kept for backward compatibility
+    use_default = d.get("use_default", d.get("use_phantom", True))
+    return SF(value=v, use_default=use_default)
 
 
 def _settings_to_dict(s: ItemSettings) -> dict:

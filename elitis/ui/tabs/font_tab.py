@@ -155,7 +155,7 @@ class FontTab(QWidget):
             return
         item_sf = self._state.current_item.settings.get("font_name")
         item_sf.value = name
-        item_sf.use_phantom = False
+        item_sf.use_default = False
         # Update the font_name row control
         for row in self._rows:
             if row.field_name == "font_name":

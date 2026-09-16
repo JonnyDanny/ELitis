@@ -224,7 +224,7 @@ class FramingTab(QWidget):
             item = self._state.current_item
             sf = item.settings.get('image_fit')
             sf.value = mode
-            sf.use_phantom = False
+            sf.use_default = False
             self._state.notify_settings_changed()
 
     def _on_crop_changed(self, x: float, y: float, w: float, h: float):
@@ -233,7 +233,7 @@ class FramingTab(QWidget):
         for field, val in (('crop_x', x), ('crop_y', y), ('crop_w', w), ('crop_h', h)):
             sf = item.settings.get(field)
             sf.value = round(val, 4)
-            sf.use_phantom = False
+            sf.use_default = False
         self._update_crop_label(x, y, w, h)
 
     def _on_drag_finished(self, x: float, y: float, w: float, h: float):
