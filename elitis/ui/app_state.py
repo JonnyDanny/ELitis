@@ -66,6 +66,8 @@ class AppState(QObject):
     preview_ready = Signal(QPixmap)
     # Status bar messages
     status_message = Signal(str)
+    # Emitted when any item's rendered/dirty status changes
+    items_status_changed = Signal()
 
     def __init__(
         self,
@@ -86,6 +88,8 @@ class AppState(QObject):
         self._project_path: Optional[Path] = None
         self._pool = QThreadPool.globalInstance()
         self._pending_render: Optional[_RenderTask] = None
+        # IDs of items whose last export is still current (not dirtied since)
+        self._clean_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Font manager
@@ -149,8 +153,22 @@ class AppState(QObject):
     # ------------------------------------------------------------------
 
     def notify_settings_changed(self):
+        self._clean_ids.discard(self.current_item.id)
         self.settings_changed.emit()
         self.request_preview()
+        self.items_status_changed.emit()
+
+    def is_clean(self, item_id: str) -> bool:
+        """True if the item has been exported and not changed since."""
+        return item_id in self._clean_ids
+
+    def mark_rendered(self, item_id: str):
+        self._clean_ids.add(item_id)
+        self.items_status_changed.emit()
+
+    def mark_all_rendered(self):
+        self._clean_ids = {i.id for i in self._project.content_items}
+        self.items_status_changed.emit()
 
     # ------------------------------------------------------------------
     # Image management
@@ -221,6 +239,7 @@ class AppState(QObject):
         self._project = Project.new(name, str(self.egest_dir))
         self._project_path = None
         self._current_index = 0
+        self._clean_ids.clear()
         self.project_replaced.emit()
         self.current_changed.emit(0)
         self.request_preview()
@@ -242,6 +261,7 @@ class AppState(QObject):
         self._project = data_io.load_project(path)
         self._project_path = path
         self._current_index = min(1, len(self._project.items) - 1)
+        self._clean_ids.clear()
         self._font_manager.scan()
         self.project_replaced.emit()
         self.current_changed.emit(self._current_index)
@@ -267,7 +287,9 @@ class AppState(QObject):
         def _progress(done, total, path):
             self.status_message.emit(f"Saved {done}/{total}: {path.name}")
 
-        return renderer.render_all(
+        result = renderer.render_all(
             self._project, self._font_manager, out_dir,
             fmt=fmt, on_progress=_progress,
         )
+        self.mark_all_rendered()
+        return result
