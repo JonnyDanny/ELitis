@@ -2,8 +2,8 @@
 Data model for ELItis.
 
 Every visual setting is wrapped in a SettingField (SF). When use_default=True the
-rendering engine substitutes the phantom item's value instead of this item's own.
-The phantom item (items[0]) always has use_default=False on every field — it IS the
+rendering engine substitutes the defaults item's value instead of this item's own.
+The defaults item (items[0]) always has use_default=False on every field — it IS the
 source of defaults.
 """
 from __future__ import annotations
@@ -19,19 +19,19 @@ import uuid
 
 @dataclass
 class SF:
-    """A setting value with an optional "use phantom" flag."""
+    """A setting value with an optional "use default" flag."""
     value: Any
     use_default: bool = True
 
-    def resolve(self, phantom_value: Any) -> Any:
-        return phantom_value if self.use_default else self.value
+    def resolve(self, default_value: Any) -> Any:
+        return default_value if self.use_default else self.value
 
 
 # ---------------------------------------------------------------------------
-# Default values used when creating the phantom item
+# Default values for every field — used when creating the defaults item
 # ---------------------------------------------------------------------------
 
-PHANTOM_DEFAULTS: dict[str, Any] = {
+FIELD_DEFAULTS: dict[str, Any] = {
     # Canvas
     "canvas_width": 1280,
     "canvas_height": 720,
@@ -80,7 +80,7 @@ PHANTOM_DEFAULTS: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 def _sf(key: str) -> SF:
-    return SF(value=PHANTOM_DEFAULTS[key], use_default=True)
+    return SF(value=FIELD_DEFAULTS[key], use_default=True)
 
 
 @dataclass
@@ -140,7 +140,7 @@ class ItemSettings:
 
 
 # ---------------------------------------------------------------------------
-# ResolvedSettings — flat dict, no SF wrappers; result of phantom resolution
+# ResolvedSettings — flat dict, no SF wrappers; result of defaults resolution
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -179,13 +179,13 @@ class ResolvedSettings:
     box_position: str
 
 
-def resolve(item: ItemSettings, phantom: ItemSettings) -> ResolvedSettings:
-    """Build a ResolvedSettings by substituting phantom values where use_default=True."""
+def resolve(item: ItemSettings, defaults: ItemSettings) -> ResolvedSettings:
+    """Build a ResolvedSettings by substituting default values where use_default=True."""
     kwargs = {}
     for f in dc_fields(item):
-        item_sf: SF = getattr(item, f.name)
-        phantom_sf: SF = getattr(phantom, f.name)
-        kwargs[f.name] = phantom_sf.value if item_sf.use_default else item_sf.value
+        item_sf: SF    = getattr(item, f.name)
+        default_sf: SF = getattr(defaults, f.name)
+        kwargs[f.name] = default_sf.value if item_sf.use_default else item_sf.value
     return ResolvedSettings(**kwargs)
 
 
@@ -197,16 +197,16 @@ def resolve(item: ItemSettings, phantom: ItemSettings) -> ResolvedSettings:
 class ThumbnailItem:
     id: str
     label: str
-    image_path: Optional[str]       # None = inherit phantom image
+    image_path: Optional[str]       # None = inherit from defaults item
     settings: ItemSettings
-    is_phantom: bool = False
+    is_default: bool = False
 
     @classmethod
-    def make_phantom(cls) -> ThumbnailItem:
+    def make_defaults(cls) -> ThumbnailItem:
         s = ItemSettings()
         for f in dc_fields(s):
             getattr(s, f.name).use_default = False
-        return cls(id="__phantom__", label="", image_path=None, settings=s, is_phantom=True)
+        return cls(id="__defaults__", label="", image_path=None, settings=s, is_default=True)
 
     @classmethod
     def new_item(cls, label: str, item_id: str | None = None) -> ThumbnailItem:
@@ -217,9 +217,9 @@ class ThumbnailItem:
             settings=ItemSettings(),
         )
 
-    def effective_image(self, phantom: ThumbnailItem) -> Optional[str]:
-        """Return this item's image path, or the phantom's if not set."""
-        return self.image_path or phantom.image_path
+    def effective_image(self, defaults: ThumbnailItem) -> Optional[str]:
+        """Return this item's image path, or the defaults item's if not set."""
+        return self.image_path or defaults.image_path
 
 
 # ---------------------------------------------------------------------------
@@ -229,17 +229,17 @@ class ThumbnailItem:
 @dataclass
 class Project:
     name: str
-    items: list          # list[ThumbnailItem]; items[0] is always the phantom
+    items: list          # list[ThumbnailItem]; items[0] is always the defaults item
     output_dir: str
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     modified_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     @classmethod
     def new(cls, name: str, output_dir: str) -> Project:
-        return cls(name=name, items=[ThumbnailItem.make_phantom()], output_dir=output_dir)
+        return cls(name=name, items=[ThumbnailItem.make_defaults()], output_dir=output_dir)
 
     @property
-    def phantom(self) -> ThumbnailItem:
+    def defaults(self) -> ThumbnailItem:
         return self.items[0]
 
     @property
@@ -252,12 +252,12 @@ class Project:
         return item
 
     def remove_item(self, item_id: str):
-        self.items = [i for i in self.items if i.id != item_id or i.is_phantom]
+        self.items = [i for i in self.items if i.id != item_id or i.is_default]
 
     def touch(self):
         self.modified_at = datetime.now().isoformat()
 
     def resolve_item(self, item: ThumbnailItem) -> ResolvedSettings:
-        if item.is_phantom:
+        if item.is_default:
             return resolve(item.settings, item.settings)
-        return resolve(item.settings, self.phantom.settings)
+        return resolve(item.settings, self.defaults.settings)

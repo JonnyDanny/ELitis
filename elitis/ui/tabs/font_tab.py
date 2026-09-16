@@ -108,11 +108,11 @@ class FontTab(QWidget):
         box = QGroupBox(title)
         vbox = QVBoxLayout(box)
         vbox.setSpacing(4)
-        item    = self._state.current_item
-        phantom = self._state.phantom
-        ctx = RowContext(is_phantom=item.is_phantom)
+        item     = self._state.current_item
+        defaults = self._state.defaults
+        ctx = RowContext(is_default=item.is_default)
         for label, field_name in fields:
-            row = make_row(label, field_name, item.settings, phantom.settings, ctx=ctx)
+            row = make_row(label, field_name, item.settings, defaults.settings, ctx=ctx)
             row.changed.connect(self._state.notify_settings_changed)
             vbox.addWidget(row)
             self._rows.append(row)
@@ -138,12 +138,12 @@ class FontTab(QWidget):
         self._state.project_replaced.connect(self._on_item_changed)
 
     def _on_item_changed(self, _index: int = 0):
-        item    = self._state.current_item
-        phantom = self._state.phantom
-        ctx = RowContext(is_phantom=item.is_phantom)
+        item     = self._state.current_item
+        defaults = self._state.defaults
+        ctx = RowContext(is_default=item.is_default)
         for row in self._rows:
             row.apply_context(ctx)
-            row.switch_item(item.settings.get(row.field_name), phantom.settings.get(row.field_name))
+            row.switch_item(item.settings.get(row.field_name), defaults.settings.get(row.field_name))
         # Sync font list selection
         font_name = item.settings.get("font_name").value
         items = self._font_list.findItems(font_name, Qt.MatchFlag.MatchFixedString)
@@ -159,6 +159,6 @@ class FontTab(QWidget):
         # Update the font_name row control
         for row in self._rows:
             if row.field_name == "font_name":
-                row.switch_item(item_sf, self._state.phantom.settings.get("font_name"))
+                row.switch_item(item_sf, self._state.defaults.settings.get("font_name"))
                 break
         self._state.notify_settings_changed()

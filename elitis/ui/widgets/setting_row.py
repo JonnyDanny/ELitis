@@ -5,7 +5,7 @@ The default toggle (☁ icon) lets the user switch between:
   - use_default=True  → inherit the project default (control shows default value, grayed out)
   - use_default=False → item-specific override (control is active)
 
-When switching TO override for the first time, the phantom's current value is copied
+When switching TO override for the first time, the current default value is copied
 as the item's starting value so edits feel continuous.
 
 Factory function `make_row()` returns the appropriate subclass for each value type.
@@ -29,7 +29,7 @@ class RowContext:
     Display context for a SettingRow — describes the *kind* of item currently shown,
     not the data itself.  Add new flags here; no function signatures need to change.
     """
-    is_phantom: bool = False   # phantom has no defaults to inherit from — hide the toggle
+    is_default: bool = False   # defaults item has no higher-level defaults — hide the toggle
 
 
 class SettingRow(QWidget):
@@ -37,17 +37,17 @@ class SettingRow(QWidget):
     changed = Signal()   # emitted whenever the SF changes (value or use_default)
     field_name: str = ""  # set by make_row()
 
-    def __init__(self, label: str, item_sf: SF, phantom_sf: SF, parent=None):
+    def __init__(self, label: str, item_sf: SF, default_sf: SF, parent=None):
         super().__init__(parent)
-        self._item_sf = item_sf
-        self._phantom_sf = phantom_sf
+        self._item_sf    = item_sf
+        self._default_sf = default_sf
         self._ctx = RowContext()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(8)
 
-        # Phantom toggle — hidden when editing the phantom itself (it IS the source)
+        # Default toggle — hidden when editing the defaults item itself (it IS the source)
         self._toggle = QCheckBox()
         self._toggle.setToolTip("☁  Use project default")
         self._toggle.setFixedWidth(18)
@@ -71,7 +71,7 @@ class SettingRow(QWidget):
     def apply_context(self, ctx: RowContext):
         """Apply display context (what kind of item this is) without touching SF data."""
         self._ctx = ctx
-        self._toggle.setVisible(not ctx.is_phantom)
+        self._toggle.setVisible(not ctx.is_default)
         # Future context fields go here — no callers need to change
 
     # ------------------------------------------------------------------
@@ -100,7 +100,7 @@ class SettingRow(QWidget):
         self._toggle.blockSignals(False)
         self._control.setEnabled(not using_default)
         if using_default:
-            self._write_control(self._phantom_sf.value)
+            self._write_control(self._default_sf.value)
         else:
             self._write_control(self._item_sf.value)
 
@@ -108,7 +108,7 @@ class SettingRow(QWidget):
         use_default = bool(state)
         if not use_default and self._item_sf.use_default:
             # First time enabling override: seed with the current default value
-            self._item_sf.value = self._phantom_sf.value
+            self._item_sf.value = self._default_sf.value
         self._item_sf.use_default = use_default
         self._refresh_state()
         self.changed.emit()
@@ -118,16 +118,16 @@ class SettingRow(QWidget):
             self._item_sf.value = self._read_control()
             self.changed.emit()
 
-    def refresh_phantom(self):
-        """Call when phantom value changes so grayed display updates."""
+    def refresh_defaults(self):
+        """Call when a default value changes so grayed display updates."""
         if self._item_sf.use_default:
-            self._write_control(self._phantom_sf.value)
+            self._write_control(self._default_sf.value)
 
-    def switch_item(self, item_sf: SF, phantom_sf: SF | None = None):
+    def switch_item(self, item_sf: SF, default_sf: SF | None = None):
         """Switch to a different item's SF.  Context is unchanged — call apply_context separately."""
         self._item_sf = item_sf
-        if phantom_sf is not None:
-            self._phantom_sf = phantom_sf
+        if default_sf is not None:
+            self._default_sf = default_sf
         self._refresh_state()
 
 
@@ -136,10 +136,10 @@ class SettingRow(QWidget):
 # ---------------------------------------------------------------------------
 
 class IntRow(SettingRow):
-    def __init__(self, label, item_sf, phantom_sf, min_val=0, max_val=9999, parent=None):
+    def __init__(self, label, item_sf, default_sf, min_val=0, max_val=9999, parent=None):
         self._min = min_val
         self._max = max_val
-        super().__init__(label, item_sf, phantom_sf, parent)
+        super().__init__(label, item_sf, default_sf, parent)
 
     def _build_control(self):
         sb = QSpinBox()
@@ -157,13 +157,13 @@ class IntRow(SettingRow):
 
 
 class FloatRow(SettingRow):
-    def __init__(self, label, item_sf, phantom_sf, min_val=0.0, max_val=1.0,
+    def __init__(self, label, item_sf, default_sf, min_val=0.0, max_val=1.0,
                  decimals=2, step=0.01, parent=None):
         self._min = min_val
         self._max = max_val
         self._dec = decimals
         self._step = step
-        super().__init__(label, item_sf, phantom_sf, parent)
+        super().__init__(label, item_sf, default_sf, parent)
 
     def _build_control(self):
         sb = QDoubleSpinBox()
@@ -183,9 +183,9 @@ class FloatRow(SettingRow):
 
 
 class ComboRow(SettingRow):
-    def __init__(self, label, item_sf, phantom_sf, options: list[str], parent=None):
+    def __init__(self, label, item_sf, default_sf, options: list[str], parent=None):
         self._options = options
-        super().__init__(label, item_sf, phantom_sf, parent)
+        super().__init__(label, item_sf, default_sf, parent)
 
     def _build_control(self):
         cb = QComboBox()
@@ -241,7 +241,7 @@ def make_row(
     label: str,
     field_name: str,
     item_settings,
-    phantom_settings,
+    default_settings,
     ctx: RowContext | None = None,
     **kwargs,
 ) -> SettingRow:
@@ -250,7 +250,7 @@ def make_row(
     kwargs are forwarded to the subclass (e.g. min_val, max_val, options).
     """
     item_sf = item_settings.get(field_name)
-    phantom_sf = phantom_settings.get(field_name)
+    default_sf = default_settings.get(field_name)
 
     _TYPE_MAP = {
         # int fields
@@ -295,7 +295,7 @@ def make_row(
     if cls is None:
         raise ValueError(f"No SettingRow type registered for field '{field_name}'")
     merged = {**defaults, **kwargs}
-    row = cls(label, item_sf, phantom_sf, **merged)
+    row = cls(label, item_sf, default_sf, **merged)
     row.field_name = field_name
     if ctx is not None:
         row.apply_context(ctx)

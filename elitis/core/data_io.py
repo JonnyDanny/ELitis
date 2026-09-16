@@ -15,8 +15,10 @@ import csv
 import io
 
 from elitis.core.models import (
-    Project, ThumbnailItem, ItemSettings, SF, PHANTOM_DEFAULTS
+    Project, ThumbnailItem, ItemSettings, SF, FIELD_DEFAULTS
 )
+
+SAVE_VERSION = "0.2.0.pre"
 
 try:
     import chardet
@@ -37,10 +39,10 @@ def _sf_to_dict(sf: SF) -> dict:
 
 
 def _sf_from_dict(d: dict, default_key: str) -> SF:
-    v = d.get("value", PHANTOM_DEFAULTS.get(default_key))
+    v = d.get("value", FIELD_DEFAULTS.get(default_key))
     if isinstance(v, list):
         v = tuple(v)
-    # "use_phantom" is the old key name — kept for backward compatibility
+    # "use_phantom" is the pre-0.2 key name — kept for backward compatibility
     use_default = d.get("use_default", d.get("use_phantom", True))
     return SF(value=v, use_default=use_default)
 
@@ -62,17 +64,19 @@ def _item_to_dict(item: ThumbnailItem) -> dict:
         "id": item.id,
         "label": item.label,
         "image_path": item.image_path,
-        "is_phantom": item.is_phantom,
+        "is_default": item.is_default,
         "settings": _settings_to_dict(item.settings),
     }
 
 
 def _item_from_dict(d: dict) -> ThumbnailItem:
+    # "is_phantom" is the pre-0.2 key name — kept for backward compatibility
+    is_default = d.get("is_default", d.get("is_phantom", False))
     return ThumbnailItem(
         id=d["id"],
         label=d.get("label", ""),
         image_path=d.get("image_path"),
-        is_phantom=d.get("is_phantom", False),
+        is_default=is_default,
         settings=_settings_from_dict(d.get("settings", {})),
     )
 
@@ -84,6 +88,7 @@ def _item_from_dict(d: dict) -> ThumbnailItem:
 def save_project(project: Project, path: Path):
     project.touch()
     data = {
+        "version": SAVE_VERSION,
         "name": project.name,
         "output_dir": project.output_dir,
         "created_at": project.created_at,
@@ -97,8 +102,8 @@ def save_project(project: Project, path: Path):
 def load_project(path: Path) -> Project:
     data = json.loads(path.read_text(encoding="utf-8"))
     items = [_item_from_dict(d) for d in data.get("items", [])]
-    if not items or not items[0].is_phantom:
-        items.insert(0, ThumbnailItem.make_phantom())
+    if not items or not items[0].is_default:
+        items.insert(0, ThumbnailItem.make_defaults())
     return Project(
         name=data.get("name", path.stem),
         items=items,
@@ -106,6 +111,14 @@ def load_project(path: Path) -> Project:
         created_at=data.get("created_at", ""),
         modified_at=data.get("modified_at", ""),
     )
+
+
+def save_version(path: Path) -> str:
+    """Return the version string from a saved project file, or '0.1' for pre-versioned files."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("version", "0.1")
+    except Exception:
+        return "unknown"
 
 
 # ---------------------------------------------------------------------------

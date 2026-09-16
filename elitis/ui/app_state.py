@@ -84,14 +84,14 @@ class AppState(QObject):
 
         self._font_manager = FontManager(fonts_dir)
         self._project: Project = Project.new("untitled", str(egest_dir))
-        self._current_index: int = 1   # 0=phantom, 1..N = content
+        self._current_index: int = 1   # 0=defaults item, 1..N = content
         self._project_path: Optional[Path] = None
         self._pool = QThreadPool.globalInstance()
         self._pending_render: Optional[_RenderTask] = None
         # IDs of items whose last export is still current (not dirtied since)
         self._clean_ids: set[str] = set()
-        # True if the phantom's settings were changed since last project load/new
-        self._phantom_dirty: bool = False
+        # True if the defaults item's settings were changed since last project load/new
+        self._defaults_dirty: bool = False
 
     # ------------------------------------------------------------------
     # Font manager
@@ -120,8 +120,8 @@ class AppState(QObject):
         return items[idx]
 
     @property
-    def phantom(self) -> ThumbnailItem:
-        return self._project.phantom
+    def defaults(self) -> ThumbnailItem:
+        return self._project.defaults
 
     def item_count(self) -> int:
         return len(self._project.items)
@@ -147,7 +147,7 @@ class AppState(QObject):
     def go_prev(self):
         self.go_to(self._current_index - 1)
 
-    def go_to_phantom(self):
+    def go_to_defaults(self):
         self.go_to(0)
 
     # ------------------------------------------------------------------
@@ -156,8 +156,8 @@ class AppState(QObject):
 
     def notify_settings_changed(self):
         cur = self.current_item
-        if cur.is_phantom:
-            self._phantom_dirty = True
+        if cur.is_default:
+            self._defaults_dirty = True
         else:
             self._clean_ids.discard(cur.id)
         self.settings_changed.emit()
@@ -169,9 +169,9 @@ class AppState(QObject):
         return item_id in self._clean_ids
 
     @property
-    def phantom_dirty(self) -> bool:
-        """True if the phantom's settings changed since the last project load/new."""
-        return self._phantom_dirty
+    def defaults_dirty(self) -> bool:
+        """True if the defaults item's settings changed since the last project load/new."""
+        return self._defaults_dirty
 
     def mark_rendered(self, item_id: str):
         self._clean_ids.add(item_id)
@@ -251,7 +251,7 @@ class AppState(QObject):
         self._project_path = None
         self._current_index = 0
         self._clean_ids.clear()
-        self._phantom_dirty = False
+        self._defaults_dirty = False
         self.project_replaced.emit()
         self.current_changed.emit(0)
         self.request_preview()
@@ -274,7 +274,7 @@ class AppState(QObject):
         self._project_path = path
         self._current_index = min(1, len(self._project.items) - 1)
         self._clean_ids.clear()
-        self._phantom_dirty = False
+        self._defaults_dirty = False
         self._font_manager.scan()
         self.project_replaced.emit()
         self.current_changed.emit(self._current_index)

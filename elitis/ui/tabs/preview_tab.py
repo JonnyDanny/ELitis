@@ -119,9 +119,9 @@ class PreviewTab(QWidget):
         top.addWidget(self._lbl_name)
         top.addStretch()
 
-        self._btn_phantom = QPushButton("☁ Phantom")
-        self._btn_phantom.setToolTip("Jump to phantom (template) item")
-        top.addWidget(self._btn_phantom)
+        self._btn_defaults = QPushButton("☁ Defaults")
+        self._btn_defaults.setToolTip("Jump to defaults (template) item")
+        top.addWidget(self._btn_defaults)
         layout.addLayout(top)
 
         # ---- Main canvas ----
@@ -173,7 +173,7 @@ class PreviewTab(QWidget):
 
         self._btn_prev.clicked.connect(s.go_prev)
         self._btn_next.clicked.connect(s.go_next)
-        self._btn_phantom.clicked.connect(s.go_to_phantom)
+        self._btn_defaults.clicked.connect(s.go_to_defaults)
         self._btn_open_img.clicked.connect(self._open_image)
         self._btn_paste.clicked.connect(s.paste_image_from_clipboard)
         self._btn_save_one.clicked.connect(self._save_one)
@@ -200,11 +200,11 @@ class PreviewTab(QWidget):
     def _update_nav_labels(self):
         total = self._state.item_count()
         idx   = self._state.current_index
-        label = "phantom" if idx == 0 else f"{idx} / {max(1, total - 1)}"
+        label = "defaults" if idx == 0 else f"{idx} / {max(1, total - 1)}"
         self._lbl_pos.setText(label)
 
         item = self._state.current_item
-        name = "Phantom (template)" if item.is_phantom else (item.label or f"Item {idx}")
+        name = "Defaults (template)" if item.is_default else (item.label or f"Item {idx}")
         self._lbl_name.setText(name)
 
     def _open_image(self):
@@ -217,8 +217,8 @@ class PreviewTab(QWidget):
 
     def _save_one(self):
         item = self._state.current_item
-        if item.is_phantom:
-            self._state.status_message.emit("Cannot export the phantom item")
+        if item.is_default:
+            self._state.status_message.emit("Cannot export the defaults item")
             return
         cfg = self._state.project.resolve_item(item)
         out = Path(self._state.project.output_dir)

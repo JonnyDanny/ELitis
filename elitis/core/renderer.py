@@ -76,7 +76,7 @@ def render_all(
 # ---------------------------------------------------------------------------
 
 def _load_background(item: ThumbnailItem, project: Project, cfg: ResolvedSettings) -> Image.Image:
-    path_str = item.effective_image(project.phantom)
+    path_str = item.effective_image(project.defaults)
     if path_str:
         try:
             return Image.open(path_str).convert("RGBA")

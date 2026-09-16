@@ -146,10 +146,10 @@ class FramingTab(QWidget):
         sl = QVBoxLayout(size_box)
         sl.setSpacing(4)
         item    = self._state.current_item
-        phantom = self._state.phantom
-        ctx = RowContext(is_phantom=item.is_phantom)
+        defaults = self._state.defaults
+        ctx = RowContext(is_default=item.is_default)
         for label, field in (("Width", "canvas_width"), ("Height", "canvas_height")):
-            row = make_row(label, field, item.settings, phantom.settings, ctx=ctx)
+            row = make_row(label, field, item.settings, defaults.settings, ctx=ctx)
             row.changed.connect(self._on_canvas_size_changed)
             sl.addWidget(row)
             self._rows.append(row)
@@ -179,12 +179,12 @@ class FramingTab(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_from_item(self, _=None):
-        item    = self._state.current_item
-        phantom = self._state.phantom
-        cfg     = self._state.project.resolve_item(item)
+        item     = self._state.current_item
+        defaults = self._state.defaults
+        cfg      = self._state.project.resolve_item(item)
 
         # Load source image into canvas as QPixmap
-        path = item.effective_image(phantom)
+        path = item.effective_image(defaults)
         if path and Path(path).exists():
             px = QPixmap(path)
             self._canvas.set_source(px, px.width(), px.height())
@@ -204,10 +204,10 @@ class FramingTab(QWidget):
         self._update_crop_label(cfg.crop_x, cfg.crop_y, cfg.crop_w, cfg.crop_h)
 
         # Switch setting rows to new item
-        ctx = RowContext(is_phantom=item.is_phantom)
+        ctx = RowContext(is_default=item.is_default)
         for row in self._rows:
             row.apply_context(ctx)
-            row.switch_item(item.settings.get(row.field_name), phantom.settings.get(row.field_name))
+            row.switch_item(item.settings.get(row.field_name), defaults.settings.get(row.field_name))
 
     def _set_mode(self, mode: str, emit: bool = True):
         for key, btn in self._mode_btns.items():
@@ -228,7 +228,6 @@ class FramingTab(QWidget):
             self._state.notify_settings_changed()
 
     def _on_crop_changed(self, x: float, y: float, w: float, h: float):
-        # Update the SF values live (no render yet)
         item = self._state.current_item
         for field, val in (('crop_x', x), ('crop_y', y), ('crop_w', w), ('crop_h', h)):
             sf = item.settings.get(field)

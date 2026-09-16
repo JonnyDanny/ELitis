@@ -251,16 +251,16 @@ class DataTab(QWidget):
         current_content_row = self._state.current_index - 1
         if row != current_content_row:
             cur = self._state.current_item
-            # Phantom dirty: ALL inheriting items are stale — qualitatively different
+            # Defaults dirty: ALL inheriting items are stale — qualitatively different
             # from a single item being dirty, so guard on both but with distinct text.
             cur_is_dirty = (
-                cur.is_phantom and self._state.phantom_dirty
+                cur.is_default and self._state.defaults_dirty
             ) or (
-                not cur.is_phantom and not self._state.is_clean(cur.id)
+                not cur.is_default and not self._state.is_clean(cur.id)
             )
             if cur_is_dirty:
-                name = "Default template" if cur.is_phantom else (cur.label or f"Item {current_content_row + 1}")
-                guard = self._navigation_guard(name, is_phantom=cur.is_phantom)
+                name = "Default template" if cur.is_default else (cur.label or f"Item {current_content_row + 1}")
+                guard = self._navigation_guard(name, is_default=cur.is_default)
                 if guard == "cancel":
                     return
                 if guard == "preview":
@@ -295,16 +295,16 @@ class DataTab(QWidget):
         self._table.blockSignals(False)
         self._state.notify_settings_changed()
 
-    def _navigation_guard(self, label: str, *, is_phantom: bool = False) -> str:
+    def _navigation_guard(self, label: str, *, is_default: bool = False) -> str:
         """
         Ask what to do when navigating away from a dirty item as a side-effect.
         Returns 'cancel', 'preview', or 'continue'.
 
-        is_phantom=True uses stronger wording because phantom changes propagate
+        is_default=True uses stronger wording because defaults changes propagate
         to every item that inherits a default — not just one item left unrendered.
         """
         msg = QMessageBox(self)
-        if is_phantom:
+        if is_default:
             msg.setWindowTitle("Default template has unsaved changes")
             msg.setText(
                 "The default template has been modified.\n\n"
@@ -379,7 +379,7 @@ class DataTab(QWidget):
     def _insert_item(self, at_row: int):
         project = self._state.project
         new_item = ThumbnailItem.new_item("")
-        # Insert into project.items at position at_row + 1 (skip phantom at [0])
+        # Insert into project.items at position at_row + 1 (skip defaults at [0])
         insert_pos = at_row + 1
         project.items.insert(insert_pos, new_item)
         self._state.project_replaced.emit()
@@ -416,7 +416,7 @@ class DataTab(QWidget):
         new_row = row + delta
         if new_row < 0 or new_row >= len(items):
             return
-        # items[0] is phantom; content starts at index 1
+        # items[0] is defaults; content starts at index 1
         pi  = row     + 1
         pi2 = new_row + 1
         lst = self._state.project.items
@@ -441,7 +441,7 @@ class DataTab(QWidget):
             return
         project = self._state.project
         existing = {i.label: i for i in project.content_items}
-        new_items = [project.phantom]
+        new_items = [project.defaults]
         for lbl in labels:
             new_items.append(existing[lbl] if lbl in existing else ThumbnailItem.new_item(lbl))
         project.items = new_items
