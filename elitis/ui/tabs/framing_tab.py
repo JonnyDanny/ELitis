@@ -126,14 +126,15 @@ class FramingTab(QWidget):
         # Anti-upscale toggle (zoom mode only)
         self._zoom_box = QGroupBox("Zoom mode")
         zl = QVBoxLayout(self._zoom_box)
-        self._chk_upscale = QCheckBox("Allow upscaling past 1:1 pixels")
-        self._chk_upscale.setChecked(True)
+        self._chk_upscale = QCheckBox("Snap to 1:1 on release")
+        self._chk_upscale.setChecked(False)
         self._chk_upscale.toggled.connect(
-            lambda v: self._canvas.set_allow_upscale(v))
+            lambda v: self._canvas.set_allow_upscale(not v))
         zl.addWidget(self._chk_upscale)
         self._lbl_zoom_hint = QLabel(
-            "Uncheck to prevent selecting a region smaller than the output "
-            "canvas in source pixels (avoids blurry upscaling)."
+            "When checked: if your selection would require upscaling, it "
+            "expands to the minimum 1:1 pixel size on release, re-centered "
+            "on what you drew."
         )
         self._lbl_zoom_hint.setObjectName("dim")
         self._lbl_zoom_hint.setWordWrap(True)

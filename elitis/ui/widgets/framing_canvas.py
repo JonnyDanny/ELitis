@@ -115,10 +115,6 @@ class FramingCanvas(QWidget):
 
     def set_allow_upscale(self, allow: bool):
         self._allow_upscale = allow
-        if not allow and self._mode == 'zoom':
-            self._clamp_zoom_min()
-            self._clamp()
-            self.crop_changed.emit(self._cx, self._cy, self._cw, self._ch)
         self.update()
 
     def crop(self) -> tuple[float, float, float, float]:
@@ -205,18 +201,28 @@ class FramingCanvas(QWidget):
         self._cx = max(0.0, min(self._cx, 1.0 - self._cw))
         self._cy = max(0.0, min(self._cy, 1.0 - self._ch))
 
-    def _clamp_zoom_min(self):
-        """Prevent upscaling: selection must cover ≥ one output pixel per source pixel."""
-        min_w = self._out_w / self._src_w
-        min_h = self._out_h / self._src_h
-        changed = False
-        if self._cw < min_w:
-            self._cw = min(1.0, min_w)
-            changed = True
-        if self._ch < min_h:
-            self._ch = min(1.0, min_h)
-            changed = True
-        return changed
+    def _snap_to_unity_zoom(self):
+        """
+        If the selection would require upscaling, expand it to the minimum
+        1:1-pixel size and re-center it on the original center point.
+
+        Called on mouse release only — never during drag, so the user sees
+        their freehand rect live and it snaps cleanly at the end.
+        """
+        min_w = self._out_w / self._src_w   # fraction of source needed for 1:1 x
+        min_h = self._out_h / self._src_h   # fraction of source needed for 1:1 y
+        if self._cw >= min_w and self._ch >= min_h:
+            return  # already at or beyond unity zoom
+
+        cx_c = self._cx + self._cw / 2   # preserve center
+        cy_c = self._cy + self._ch / 2
+
+        self._cw = max(self._cw, min(1.0, min_w))
+        self._ch = max(self._ch, min(1.0, min_h))
+
+        self._cx = cx_c - self._cw / 2
+        self._cy = cy_c - self._ch / 2
+        self._clamp()
 
     # ------------------------------------------------------------------
     # Hit-test
@@ -318,8 +324,6 @@ class FramingCanvas(QWidget):
 
         if self._mode == 'fill':
             self._ar_lock_op(op, ox, oy, ow, oh)
-        elif self._mode == 'zoom' and not self._allow_upscale:
-            self._clamp_zoom_min()
 
         self._clamp()
         self.crop_changed.emit(self._cx, self._cy, self._cw, self._ch)
@@ -353,6 +357,12 @@ class FramingCanvas(QWidget):
         if ev.button() != Qt.MouseButton.LeftButton:
             return
         self._op = None
+
+        if self._mode == 'zoom' and not self._allow_upscale:
+            self._snap_to_unity_zoom()
+            self.crop_changed.emit(self._cx, self._cy, self._cw, self._ch)
+            self.update()
+
         self.drag_finished.emit(self._cx, self._cy, self._cw, self._ch)
         self.setCursor(_CURSORS.get(self._hit(ev.position()),
                                     Qt.CursorShape.ArrowCursor))
