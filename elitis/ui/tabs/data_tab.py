@@ -241,6 +241,25 @@ class DataTab(QWidget):
     def _on_cell_double_clicked(self, row: int, col: int):
         if col != _COL_IMAGE:
             return
+        items = self._state.project.content_items
+        if row >= len(items):
+            return
+        item = items[row]
+
+        # Navigate to this item first so the user can see the current image in the preview
+        self._state.go_to(row + 1)
+
+        # Confirm before overwriting an existing assignment
+        if item.image_path:
+            existing_name = Path(item.image_path).name
+            reply = QMessageBox.question(
+                self, "Replace image?",
+                f'"{item.label or f"Item {row + 1}"}" already has:\n  {existing_name}\n\nReplace it?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose image",
             str(self._state.ingest_dir),
@@ -248,18 +267,13 @@ class DataTab(QWidget):
         )
         if not path:
             return
-        items = self._state.project.content_items
-        if row < len(items):
-            items[row].image_path = path
-            self._table.blockSignals(True)
-            img_name = Path(path).name
-            self._table.setItem(row, _COL_IMAGE, _readonly_item(img_name))
-            self._table.blockSignals(False)
-            if self._state.current_index - 1 == row:
-                self._state.notify_settings_changed()
-            else:
-                self._state._clean_ids.discard(items[row].id)
-                self._state.items_status_changed.emit()
+
+        item.image_path = path
+        self._table.blockSignals(True)
+        self._table.setItem(row, _COL_IMAGE, _readonly_item(Path(path).name))
+        self._table.blockSignals(False)
+        # Always fire a preview update so the user sees the result immediately
+        self._state.notify_settings_changed()
 
     def _on_name_changed(self, text: str):
         self._state.project.name = text or "untitled"
