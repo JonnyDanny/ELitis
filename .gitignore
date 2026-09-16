@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Generated output (keep directory, ignore contents)
+Egest/*
+!Egest/.gitkeep
+test_output/
+
+# Pasted images (runtime-generated, user data)
+Ingest/Pasted/*
+!Ingest/Pasted/.gitkeep
+
+# Project files are user data; track the directory but not its contents
+Projects/*.json
+
+# Fonts are user-provided; track directory only
+# (add your own .ttf/.otf files here)
+Fonts/*.ttf
+Fonts/*.otf
+Fonts/*.woff
+Fonts/*.woff2
