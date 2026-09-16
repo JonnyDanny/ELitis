@@ -27,8 +27,8 @@ if not exist "%VENV%\Scripts\python.exe" (
 
 :: ---- Install / upgrade packages ----
 echo Checking packages...
-"%VENV%\Scripts\python.exe" -m pip install -q --upgrade pip
-"%VENV%\Scripts\python.exe" -m pip install -q -r "%REQ%"
+"%VENV%\Scripts\python.exe" -m pip install -q --no-cache-dir --upgrade pip
+"%VENV%\Scripts\python.exe" -m pip install -q --no-cache-dir -r "%REQ%"
 if errorlevel 1 (
     echo ERROR: pip install failed.
     pause
