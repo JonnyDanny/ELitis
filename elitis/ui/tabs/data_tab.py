@@ -246,8 +246,21 @@ class DataTab(QWidget):
             return
         item = items[row]
 
-        # Navigate to this item first so the user can see the current image in the preview
-        self._state.go_to(row + 1)
+        # If this is a different item, the navigation is a side-effect of wanting to
+        # change an image — guard the user if the current item has unrendered changes.
+        current_content_row = self._state.current_index - 1
+        if row != current_content_row:
+            cur = self._state.current_item
+            if not cur.is_phantom and not self._state.is_clean(cur.id):
+                guard = self._navigation_guard(cur.label or f"Item {current_content_row + 1}")
+                if guard == "cancel":
+                    return
+                if guard == "preview":
+                    self._state.request_preview()
+                    return
+                # "continue" — fall through and navigate
+
+            self._state.go_to(row + 1)
 
         # Confirm before overwriting an existing assignment
         if item.image_path:
@@ -272,8 +285,35 @@ class DataTab(QWidget):
         self._table.blockSignals(True)
         self._table.setItem(row, _COL_IMAGE, _readonly_item(Path(path).name))
         self._table.blockSignals(False)
-        # Always fire a preview update so the user sees the result immediately
         self._state.notify_settings_changed()
+
+    def _navigation_guard(self, label: str) -> str:
+        """
+        Ask what to do when navigating away from a dirty item as a side-effect.
+        Returns 'cancel', 'preview', or 'continue'.
+        """
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Changes not yet previewed")
+        msg.setText(
+            f'"{label}" has changes that haven\'t been previewed.\n\n'
+            "Switching now will leave those changes without a preview until you return."
+        )
+        msg.setInformativeText(
+            "Generate preview — stay here, render the current state, cancel the switch.\n"
+            "Continue — switch anyway (changes are kept but not rendered).\n"
+            "Cancel — do nothing."
+        )
+        btn_cancel   = msg.addButton("Cancel",           QMessageBox.ButtonRole.RejectRole)
+        btn_preview  = msg.addButton("Generate preview", QMessageBox.ButtonRole.AcceptRole)
+        btn_continue = msg.addButton("Continue anyway",  QMessageBox.ButtonRole.DestructiveRole)
+        msg.setDefaultButton(btn_cancel)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked == btn_preview:
+            return "preview"
+        if clicked == btn_continue:
+            return "continue"
+        return "cancel"
 
     def _on_name_changed(self, text: str):
         self._state.project.name = text or "untitled"
