@@ -235,8 +235,7 @@ class DataTab(QWidget):
         if row >= len(items):
             return
         new_label = cell.text()
-        items[row].label = new_label
-        self._state.notify_settings_changed()
+        self._state.commit_label(items[row].id, new_label)
 
     def _on_cell_double_clicked(self, row: int, col: int):
         if col != _COL_IMAGE:
@@ -289,11 +288,10 @@ class DataTab(QWidget):
         if not path:
             return
 
-        item.image_path = path
+        self._state.commit_image(item.id, path)
         self._table.blockSignals(True)
         self._table.setItem(row, _COL_IMAGE, _readonly_item(Path(path).name))
         self._table.blockSignals(False)
-        self._state.notify_settings_changed()
 
     def _navigation_guard(self, label: str, *, is_default: bool = False) -> str:
         """
@@ -377,15 +375,8 @@ class DataTab(QWidget):
         self._insert_item(row + 1 if row >= 0 else len(self._state.project.content_items))
 
     def _insert_item(self, at_row: int):
-        project = self._state.project
-        new_item = ThumbnailItem.new_item("")
-        # Insert into project.items at position at_row + 1 (skip defaults at [0])
-        insert_pos = at_row + 1
-        project.items.insert(insert_pos, new_item)
-        self._state.project_replaced.emit()
-        # Navigate to the new item and start editing its label
-        new_content_index = at_row + 1  # 1-based item index
-        self._state.go_to(new_content_index)
+        self._state.insert_item(at_row, "")
+        self._state.go_to(at_row + 1)
         self._table.editItem(self._table.item(at_row, _COL_LABEL))
 
     def _delete_item(self):
@@ -398,11 +389,9 @@ class DataTab(QWidget):
         if row >= len(items):
             return
         item = items[row]
-        self._state.project.remove_item(item.id)
-        self._state._clean_ids.discard(item.id)
+        self._state.remove_item(item.id)
         count = len(self._state.project.content_items)
         new_idx = min(row + 1, max(1, count))
-        self._state.project_replaced.emit()
         self._state.go_to(new_idx)
 
     def _move_up(self):
@@ -416,12 +405,7 @@ class DataTab(QWidget):
         new_row = row + delta
         if new_row < 0 or new_row >= len(items):
             return
-        # items[0] is defaults; content starts at index 1
-        pi  = row     + 1
-        pi2 = new_row + 1
-        lst = self._state.project.items
-        lst[pi], lst[pi2] = lst[pi2], lst[pi]
-        self._state.project_replaced.emit()
+        self._state.move_item(row, delta)
         self._state.go_to(new_row + 1)
 
     # ------------------------------------------------------------------
@@ -439,13 +423,10 @@ class DataTab(QWidget):
         if not labels:
             QMessageBox.warning(self, "Import", "No labels found in the file.")
             return
-        project = self._state.project
-        existing = {i.label: i for i in project.content_items}
-        new_items = [project.defaults]
-        for lbl in labels:
-            new_items.append(existing[lbl] if lbl in existing else ThumbnailItem.new_item(lbl))
-        project.items = new_items
-        self._state.project_replaced.emit()
+        existing = {i.label: i for i in self._state.project.content_items}
+        new_content = [existing[lbl] if lbl in existing else ThumbnailItem.new_item(lbl)
+                       for lbl in labels]
+        self._state.replace_items(new_content)
         self._state.status_message.emit(
             f"Imported {len(labels)} labels from {Path(path).name}"
         )

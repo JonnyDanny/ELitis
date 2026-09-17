@@ -153,12 +153,9 @@ class FontTab(QWidget):
     def _on_font_selected(self, name: str):
         if not name:
             return
+        self._state.commit_field('font_name', name, use_default=False)
         item_sf = self._state.current_item.settings.get("font_name")
-        item_sf.value = name
-        item_sf.use_default = False
-        # Update the font_name row control
         for row in self._rows:
             if row.field_name == "font_name":
                 row.switch_item(item_sf, self._state.defaults.settings.get("font_name"))
                 break
-        self._state.notify_settings_changed()

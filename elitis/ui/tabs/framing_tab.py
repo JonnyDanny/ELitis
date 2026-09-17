@@ -221,23 +221,13 @@ class FramingTab(QWidget):
 
         if emit:
             self._canvas.set_mode(mode)
-            item = self._state.current_item
-            sf = item.settings.get('image_fit')
-            sf.value = mode
-            sf.use_default = False
-            self._state.notify_settings_changed()
+            self._state.commit_field('image_fit', mode, use_default=False)
 
     def _on_crop_changed(self, x: float, y: float, w: float, h: float):
-        item = self._state.current_item
-        for field, val in (('crop_x', x), ('crop_y', y), ('crop_w', w), ('crop_h', h)):
-            sf = item.settings.get(field)
-            sf.value = round(val, 4)
-            sf.use_default = False
         self._update_crop_label(x, y, w, h)
 
     def _on_drag_finished(self, x: float, y: float, w: float, h: float):
-        # Trigger actual Pillow re-render only when drag ends
-        self._state.notify_settings_changed()
+        self._state.commit_crop(x, y, w, h)
 
     def _on_canvas_size_changed(self):
         self._state.notify_settings_changed()

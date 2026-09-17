@@ -154,15 +154,79 @@ class AppState(QObject):
     # Settings changes
     # ------------------------------------------------------------------
 
-    def notify_settings_changed(self):
-        cur = self.current_item
-        if cur.is_default:
+    def _react(self, item: ThumbnailItem):
+        """Single reaction point for any model mutation: dirty tracking + signals."""
+        if item.is_default:
             self._defaults_dirty = True
         else:
-            self._clean_ids.discard(cur.id)
+            self._clean_ids.discard(item.id)
         self.settings_changed.emit()
         self.request_preview()
         self.items_status_changed.emit()
+
+    def notify_settings_changed(self):
+        """Called by SettingRow connections after they write to SF directly."""
+        self._react(self.current_item)
+
+    # ------------------------------------------------------------------
+    # Write boundary — all model mutations go through these methods
+    # ------------------------------------------------------------------
+
+    def commit_field(self, field_name: str, value, use_default: bool = False,
+                     item: ThumbnailItem | None = None):
+        """Write one SF field on the current item (or explicit item) and react."""
+        target = item or self.current_item
+        sf = target.settings.get(field_name)
+        sf.value = value
+        sf.use_default = use_default
+        self._react(target)
+
+    def commit_crop(self, x: float, y: float, w: float, h: float):
+        """Write all four crop fields at once (single react call, not four)."""
+        item = self.current_item
+        for field, val in (('crop_x', x), ('crop_y', y), ('crop_w', w), ('crop_h', h)):
+            sf = item.settings.get(field)
+            sf.value = round(val, 4)
+            sf.use_default = False
+        self._react(item)
+
+    def commit_label(self, item_id: str, label: str):
+        item = self._project.find_item(item_id)
+        if item:
+            item.label = label
+            self._react(item)
+
+    def commit_image(self, item_id: str, path: str | None):
+        item = self._project.find_item(item_id)
+        if item:
+            item.image_path = path
+            self._react(item)
+
+    def insert_item(self, at_content_index: int, label: str = "") -> ThumbnailItem:
+        """Insert a new item after at_content_index (0-based content position) and emit."""
+        item = ThumbnailItem.new_item(label)
+        self._project.items.insert(at_content_index + 1, item)
+        self.project_replaced.emit()
+        return item
+
+    def remove_item(self, item_id: str):
+        """Remove an item by id, clean up tracking state, and emit."""
+        self._project.remove_item(item_id)
+        self._clean_ids.discard(item_id)
+        self.project_replaced.emit()
+
+    def move_item(self, content_row: int, delta: int):
+        """Swap a content item with its neighbour and emit."""
+        items = self._project.items
+        pi, pi2 = content_row + 1, content_row + delta + 1
+        if 1 <= pi < len(items) and 1 <= pi2 < len(items):
+            items[pi], items[pi2] = items[pi2], items[pi]
+            self.project_replaced.emit()
+
+    def replace_items(self, new_content: list):
+        """Replace all content items (preserving defaults) and emit."""
+        self._project.items = [self._project.defaults] + new_content
+        self.project_replaced.emit()
 
     def is_clean(self, item_id: str) -> bool:
         """True if the item has been exported and not changed since."""
@@ -186,8 +250,7 @@ class AppState(QObject):
     # ------------------------------------------------------------------
 
     def set_image_for_current(self, path: str):
-        self.current_item.image_path = path
-        self.notify_settings_changed()
+        self.commit_image(self.current_item.id, path)
 
     def paste_image_from_clipboard(self) -> bool:
         """
@@ -286,9 +349,8 @@ class AppState(QObject):
         for lbl in labels:
             self._project.add_item(lbl)
         if labels:
-            self._current_index = 1
             self.project_replaced.emit()
-            self.request_preview()
+            self.go_to(1)
         return len(labels)
 
     def export_batch(self, fmt: str = "PNG") -> list[Path]:

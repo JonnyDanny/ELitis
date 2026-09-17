@@ -33,8 +33,8 @@ class FontManager:
         self._paths.clear()
         if not self._dir.exists():
             return
-        for p in self._dir.iterdir():
-            if p.suffix.lower() in _FONT_EXTS:
+        for p in self._dir.rglob("*"):
+            if p.is_file() and p.suffix.lower() in _FONT_EXTS:
                 self._paths[p.stem.lower()] = p
 
     def register_with_qt(self):

@@ -251,6 +251,9 @@ class Project:
         self.items.append(item)
         return item
 
+    def find_item(self, item_id: str) -> "ThumbnailItem | None":
+        return next((i for i in self.items if i.id == item_id), None)
+
     def remove_item(self, item_id: str):
         self.items = [i for i in self.items if i.id != item_id or i.is_default]
 
