@@ -1,11 +1,17 @@
 """
 Pure Pillow rendering — no Qt imports.
 
-render_thumbnail() is the single entry point used by both:
-  - the GUI preview worker (called in a background thread)
-  - the CLI/batch export pipeline
+render_thumbnail() is the single public entry point used by both the GUI preview
+worker (called in a background thread) and the CLI/batch export pipeline.
+All drawing logic lives here so preview and export are always bit-for-bit identical.
 
-All drawing logic lives here so there is no duplication between preview and export.
+Pipeline for one item
+---------------------
+1. Load background image (or fall back to a grey checkerboard if absent/corrupt).
+2. Apply image framing: crop the source region, then scale/letterbox it to the canvas.
+3. Composite the semi-transparent box overlay.
+4. Draw text with optional outline and shadow on a separate RGBA layer, then alpha-
+   composite that layer onto the image so the text never clips the background.
 """
 from __future__ import annotations
 from pathlib import Path
@@ -30,10 +36,14 @@ def render_thumbnail(
     preview_size: Optional[tuple[int, int]] = None,
 ) -> Image.Image:
     """
-    Render one thumbnail and return a Pillow Image.
+    Render one thumbnail and return a Pillow RGBA Image.
 
-    preview_size: if given, the output is scaled to fit within this box while
-    maintaining aspect ratio (for live preview — faster than full-res).
+    If *preview_size* is given the output is proportionally scaled to fit within
+    that box (used for live preview — much faster than full-res on every keystroke).
+    The full-res path is taken when *preview_size* is None.
+
+    This function never raises for bad image paths; it silently falls back to a
+    checkerboard so the UI stays responsive and partial projects are still usable.
     """
     cfg = project.resolve_item(item)
     bg = _load_background(item, project, cfg)
@@ -46,6 +56,35 @@ def render_thumbnail(
     return bg
 
 
+def check_source_resolution(path_str: str, cfg: ResolvedSettings) -> str | None:
+    """
+    Return a human-readable warning when the source image is much smaller than
+    the output canvas, or ``None`` when the resolution is adequate.
+
+    "Much smaller" is defined as either dimension being less than half the
+    corresponding canvas dimension — at that ratio LANCZOS upscaling produces
+    visibly blurry results.  This is informational; the render still proceeds
+    normally.
+
+    Returns ``None`` without opening the file when *path_str* is empty.
+    Silently returns ``None`` if the file cannot be opened.
+    """
+    if not path_str:
+        return None
+    try:
+        with Image.open(path_str) as img:
+            iw, ih = img.size
+    except Exception:
+        return None
+    cw, ch = cfg.canvas_width, cfg.canvas_height
+    if iw * 2 < cw or ih * 2 < ch:
+        return (
+            f"Source image ({iw}×{ih} px) is much smaller than the canvas "
+            f"({cw}×{ch} px) — upscaling may cause visible blurring."
+        )
+    return None
+
+
 def render_all(
     project: Project,
     font_manager: FontManager,
@@ -53,7 +92,16 @@ def render_all(
     fmt: str = "PNG",
     on_progress=None,
 ) -> list[Path]:
-    """Batch render all content items to output_dir. Returns list of written paths."""
+    """
+    Batch-render every content item to *output_dir* and return the saved paths.
+
+    *on_progress(done, total, path)* is called after each file is written so callers
+    can update a progress bar or print status without polling.  Pass None to skip it.
+
+    Output filenames are ``NNN_sanitised_label.ext`` where NNN is zero-padded to
+    three digits.  JPEG output is converted to RGB (alpha channel dropped) before
+    saving because the JPEG format does not support transparency.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []
     items = project.content_items
@@ -76,34 +124,44 @@ def render_all(
 # ---------------------------------------------------------------------------
 
 def _load_background(item: ThumbnailItem, project: Project, cfg: ResolvedSettings) -> Image.Image:
+    """
+    Open the item's image file as RGBA, or return a grey checkerboard on failure.
+
+    The checkerboard is intentional: it signals "no image" visually without crashing
+    the render pipeline.  Failures (missing file, corrupt data, unsupported format)
+    are silently swallowed here because rendering should always succeed.
+    """
     path_str = item.effective_image(project.defaults)
     if path_str:
         try:
             return Image.open(path_str).convert("RGBA")
         except Exception:
-            pass
+            pass   # fall through to checkerboard
     return _checkerboard(cfg.canvas_width, cfg.canvas_height)
 
 
 def _apply_framing(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
     """
-    Pipeline
-    --------
-    1. Apply the crop rect (for fill / zoom modes) to select a source region.
-    2. Apply the fit mode to resize / position that region into the output canvas.
+    Resize and position the source image onto the output canvas.
 
-    fill  – crop rect is AR-matched to output (enforced by FramingCanvas UI);
-            the cropped region is stretched to fill the canvas exactly.
-    zoom  – crop rect is freehand; the region is scaled to *fit within* the
-            canvas (letterboxed), preserving source AR — no pixel distortion.
-    fit   – whole source image, letterboxed to fit canvas.
-    stretch – whole source image, stretched to fill canvas exactly.
-    center  – whole source image at native resolution, pasted centered.
+    Two-step pipeline
+    -----------------
+    Step 1 — crop to the selected region (``fill`` and ``zoom`` modes only).
+    Step 2 — apply the fit mode to produce an image of exactly (canvas_width, canvas_height).
+
+    Modes
+    -----
+    fill    — the crop rect is AR-locked to the output canvas (enforced by FramingCanvas);
+              the cropped region is stretched to fill with no letterbox bars.
+    zoom    — freehand crop rect; the cropped region is letterboxed to fit.
+    fit     — whole source image, letterboxed to fit (no crop step).
+    stretch — whole source image stretched to fill, ignoring aspect ratio.
+    center  — whole source image at native resolution, centered; edges may be clipped.
     """
     W, H = cfg.canvas_width, cfg.canvas_height
     fit = cfg.image_fit
 
-    # --- Step 1: crop to selected region (fill and zoom modes) ---
+    # Step 1 — apply crop rect for fill/zoom (skip if it covers the whole image)
     cx, cy, cw, ch = cfg.crop_x, cfg.crop_y, cfg.crop_w, cfg.crop_h
     if fit in ('fill', 'zoom') and not (cx == 0 and cy == 0 and cw == 1 and ch == 1):
         iw, ih = img.size
@@ -115,13 +173,13 @@ def _apply_framing(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
 
     iw, ih = img.size
 
-    # --- Step 2: fit mode ---
+    # Step 2 — fit mode
     if fit == 'fill':
-        # Crop is AR-matched; stretch fills canvas with no letterboxing.
+        # Crop is AR-matched to canvas; stretch fills without letterbox.
         return img.resize((W, H), Image.Resampling.LANCZOS)
 
     if fit == 'zoom':
-        # Freehand crop; scale to fit within canvas (letterbox if AR differs).
+        # Freehand crop; scale the cropped region to fit within the canvas.
         scale = min(W / iw, H / ih)
         nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
         img = img.resize((nw, nh), Image.Resampling.LANCZOS)
@@ -133,6 +191,7 @@ def _apply_framing(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
         return img.resize((W, H), Image.Resampling.LANCZOS)
 
     if fit == 'fit':
+        # Whole image, letterboxed.
         scale = min(W / iw, H / ih)
         nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
         img = img.resize((nw, nh), Image.Resampling.LANCZOS)
@@ -140,7 +199,7 @@ def _apply_framing(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
         canvas.paste(img, ((W - nw) // 2, (H - nh) // 2))
         return canvas
 
-    # center: native resolution, pasted centered (edges may be clipped)
+    # center — native resolution, centered; edges clip when image is larger than canvas
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
     ox = max(0, (W - iw) // 2)
     oy = max(0, (H - ih) // 2)
@@ -153,6 +212,13 @@ def _apply_framing(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
 
 
 def _composite_box(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
+    """
+    Draw a semi-transparent colour bar (bottom, top, or full canvas) over the image.
+
+    The overlay is composited as a separate RGBA layer so the box opacity is applied
+    uniformly — it doesn't interact with any transparency already in the background.
+    Returns the input unchanged if ``box_enabled`` is False.
+    """
     if not cfg.box_enabled:
         return img
     W, H = img.size
@@ -171,14 +237,19 @@ def _composite_box(img: Image.Image, cfg: ResolvedSettings) -> Image.Image:
 
 
 def _draw_text(img: Image.Image, label: str, cfg: ResolvedSettings, font_manager: FontManager) -> Image.Image:
+    """
+    Render label text onto a blank RGBA layer, then alpha-composite it onto *img*.
+
+    Draws (in order) shadow → outline → fill, so the shadow is always behind the
+    outline and the outline is always behind the fill.  The separate layer ensures
+    the text opacity setting applies uniformly to the whole text block.
+    """
     W, H = img.size
     text = _apply_transform(label, cfg.text_transform)
     pad = cfg.box_padding
 
-    # Determine usable width
     usable_w = W - pad * 2
 
-    # Fit font and wrap text
     font, lines = _fit_text(
         text, usable_w,
         cfg.font_name, cfg.font_size, cfg.font_min_size,
@@ -186,7 +257,7 @@ def _draw_text(img: Image.Image, label: str, cfg: ResolvedSettings, font_manager
         font_manager,
     )
 
-    # Measure total text block
+    # Measure total text block height and max line width
     draw_tmp = ImageDraw.Draw(img.copy())
     line_bboxes = [draw_tmp.textbbox((0, 0), ln, font=font) for ln in lines]
     line_heights = [bb[3] - bb[1] for bb in line_bboxes]
@@ -195,12 +266,11 @@ def _draw_text(img: Image.Image, label: str, cfg: ResolvedSettings, font_manager
     total_h = sum(line_heights) + spacing * (len(lines) - 1)
     max_w = max(line_widths) if line_widths else 0
 
-    # Anchor position
+    # text_x/text_y are normalised canvas fractions; the anchor is the block center
     cx = int(W * cfg.text_x)
     cy = int(H * cfg.text_y)
     block_top = cy - total_h // 2
 
-    # Build a new RGBA layer for the text so we can apply opacity
     text_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(text_layer)
 
@@ -216,13 +286,11 @@ def _draw_text(img: Image.Image, label: str, cfg: ResolvedSettings, font_manager
         else:
             x = cx - lw // 2
 
-        # Shadow (drawn first, behind everything)
         if cfg.shadow_enabled:
             sx, sy = cfg.shadow_offset_x, cfg.shadow_offset_y
             sr, sg, sb = cfg.shadow_color
-            _draw_shadow(d, ln, x, y_cursor, font, (sr, sg, sb, ta), sx, sy, cfg.shadow_blur)
+            _draw_shadow(text_layer, d, ln, x, y_cursor, font, (sr, sg, sb, ta), sx, sy, cfg.shadow_blur)
 
-        # Outline
         if cfg.outline_enabled:
             ow = cfg.outline_width
             or_, og, ob = cfg.outline_color
@@ -234,18 +302,35 @@ def _draw_text(img: Image.Image, label: str, cfg: ResolvedSettings, font_manager
                         continue
                     d.text((x + dx, y_cursor + dy), ln, font=font, fill=(or_, og, ob, ta))
 
-        # Main text
         d.text((x, y_cursor), ln, font=font, fill=(tr, tg, tb, ta))
         y_cursor += lh + spacing
 
     return Image.alpha_composite(img, text_layer)
 
 
-def _draw_shadow(draw: ImageDraw.Draw, text: str, x: int, y: int, font, color: tuple, ox: int, oy: int, blur: int):
+def _draw_shadow(
+    layer: Image.Image,
+    draw: ImageDraw.Draw,
+    text: str,
+    x: int,
+    y: int,
+    font,
+    color: tuple,
+    ox: int,
+    oy: int,
+    blur: int,
+) -> None:
+    """
+    Draw a (optionally blurred) drop shadow for *text* at (*x*+*ox*, *y*+*oy*).
+
+    When *blur* is zero the shadow is drawn directly with the provided *draw* object.
+    When *blur* > 0 the shadow is rendered onto a small scratch image, blurred with a
+    Gaussian kernel, and pasted onto *layer* — the explicit *layer* argument replaces
+    the old ``draw._image`` private-attribute access.
+    """
     if blur <= 0:
         draw.text((x + ox, y + oy), text, font=font, fill=color)
         return
-    # Render shadow to a tiny temp surface then blur
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     margin = blur * 2
@@ -253,16 +338,27 @@ def _draw_shadow(draw: ImageDraw.Draw, text: str, x: int, y: int, font, color: t
     sd = ImageDraw.Draw(shadow_img)
     sd.text((margin, margin), text, font=font, fill=color)
     shadow_img = shadow_img.filter(ImageFilter.GaussianBlur(radius=blur))
-    draw._image.paste(shadow_img, (x + ox - margin, y + oy - margin), shadow_img)
+    layer.paste(shadow_img, (x + ox - margin, y + oy - margin), shadow_img)
 
 
 def _fit_text(
-    text: str, max_width: int,
-    font_name: str, max_size: int, min_size: int,
-    max_lines: int, auto_size: bool,
+    text: str,
+    max_width: int,
+    font_name: str,
+    max_size: int,
+    min_size: int,
+    max_lines: int,
+    auto_size: bool,
     font_manager: FontManager,
 ) -> tuple:
-    """Return (font, lines) that fit within max_width and max_lines."""
+    """
+    Return (font, lines) such that *lines* fits within *max_width* and *max_lines*.
+
+    When *auto_size* is True the font size is stepped down by 2pt from *max_size* to
+    *min_size* until the wrapped text fits.  At *min_size* the lines are hard-truncated
+    to *max_lines* rather than continuing to shrink (there is no useful size below
+    the minimum).
+    """
     sizes = range(max_size, min_size - 1, -2) if auto_size else [max_size]
 
     for size in sizes:
@@ -271,14 +367,20 @@ def _fit_text(
         if len(lines) <= max_lines:
             return font, lines
 
-    # At min_size, just truncate
+    # At min_size: truncate rather than shrink further
     font = font_manager.get_pil_font(font_name, min_size)
     lines = _wrap_text(text, font, max_width)
     return font, lines[:max_lines]
 
 
 def _wrap_text(text: str, font, max_width: int) -> list[str]:
-    """Wrap text using real PIL text measurement."""
+    """
+    Word-wrap *text* to fit within *max_width* pixels using real PIL text measurement.
+
+    A single word that is already wider than *max_width* is placed on its own line
+    (no character-level splitting).  Returns ``[""]`` for empty input so callers
+    always get at least one line.
+    """
     dummy = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     words = text.split()
     lines: list[str] = []
@@ -301,6 +403,7 @@ def _wrap_text(text: str, font, max_width: int) -> list[str]:
 
 
 def _apply_transform(text: str, transform: str) -> str:
+    """Apply a simple case transform (none / upper / lower / title) to *text*."""
     match transform:
         case "upper": return text.upper()
         case "lower": return text.lower()
@@ -309,16 +412,30 @@ def _apply_transform(text: str, transform: str) -> str:
 
 
 def _fit_to_preview(img: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Scale *img* down proportionally so it fits within *size*; never upscale."""
     img.thumbnail(size, Image.Resampling.LANCZOS)
     return img
 
 
 def _safe_filename(s: str, max_len: int = 60) -> str:
+    """
+    Convert an arbitrary string to a safe filesystem stem.
+
+    Keeps alphanumerics, spaces, hyphens, and underscores; replaces everything else
+    with ``_``.  Strips surrounding whitespace, truncates to *max_len*, and returns
+    ``"item"`` if the sanitised result would be empty.
+    """
     safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in s).strip()
     return safe[:max_len] or "item"
 
 
 def _checkerboard(w: int, h: int, sq: int = 40) -> Image.Image:
+    """
+    Generate a grey checkerboard RGBA image of size *w*×*h*.
+
+    Used as a placeholder when no background image is assigned or loadable.
+    *sq* controls the pixel size of each square.
+    """
     img = Image.new("RGBA", (w, h))
     pix = img.load()
     light = (200, 200, 200, 255)
