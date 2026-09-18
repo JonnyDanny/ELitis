@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "elitis"
+version = "0.2.0.dev0"
+description = "Tier-list thumbnail generator"
+requires-python = ">=3.10"
+dependencies = [
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+gui      = ["PySide6>=6.6"]
+encoding = ["chardet>=5.0"]
+all      = ["PySide6>=6.6", "chardet>=5.0"]
+
+[project.scripts]
+elitis = "elitis.main:main"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["elitis*"]

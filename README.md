@@ -1,9 +1,11 @@
 # ELItis
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
 Tier list thumbnail generator. Produces a styled image for every item in your
 list — consistent font, box overlay, crop, and text — exported as PNG or JPEG.
-Clean rewrite of StamperEL; stores all measurements as fractions of the output
-canvas so resolution can change without re-tuning any setting.
+All measurements are stored as fractions of the output canvas so resolution
+can change without re-tuning any setting.
 
 ## Requirements
 
