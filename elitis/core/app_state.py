@@ -92,6 +92,10 @@ class BaseAppState:
     def _on_status_message(self, msg: str) -> None:
         """Called to surface a status message (progress, warnings, errors)."""
 
+    def _on_warnings(self, warnings: list) -> None:
+        """Called after render_all() with the full list of RenderWarnings.
+        Qt: updates warnings panel. Colab: displays inline table. CLI: stderr."""
+
     # ------------------------------------------------------------------
     # Internal reaction — dirty tracking + hook dispatch
     # ------------------------------------------------------------------
@@ -253,9 +257,10 @@ class BaseAppState:
         def _progress(done, total, path):
             self._on_status_message(f"Saved {done}/{total}: {path.name}")
 
-        result = renderer.render_all(
+        saved, warnings = renderer.render_all(
             self._project, self._font_manager, out_dir,
             fmt=fmt, on_progress=_progress,
         )
         self.mark_all_rendered()
-        return result
+        self._on_warnings(warnings)
+        return saved, warnings

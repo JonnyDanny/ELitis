@@ -1,5 +1,6 @@
 """
-Project serialization (JSON) and label import (CSV / plain-text).
+Project serialization (JSON), label import (CSV / plain-text), and
+additive CSV reconciliation.
 
 Design rules
 ------------
@@ -8,9 +9,12 @@ Design rules
 - Encoding detection uses chardet when available; falls back to UTF-8.
 - Backward compatibility: the pre-0.2 field names ``use_phantom`` and ``is_phantom``
   are still accepted on load so old project files continue to work.
+- reconcile_import() is the entry point for additive CSV import.  Call it once per
+  CSV in the desired order; each call treats the current project as master and the
+  incoming labels as subordinate.
 """
 from __future__ import annotations
-from dataclasses import fields as dc_fields
+from dataclasses import dataclass, fields as dc_fields
 from pathlib import Path
 from typing import Optional
 import json
@@ -22,6 +26,7 @@ import zlib
 from elitis.core.models import (
     Project, ThumbnailItem, ItemSettings, SF, FIELD_DEFAULTS, ImageHash
 )
+from elitis.core.text_utils import normalize_label, comparison_key
 
 SAVE_VERSION = "0.2.0.pre"
 
@@ -256,6 +261,159 @@ def save_version(path: Path) -> str:
         return json.loads(path.read_text(encoding="utf-8")).get("version", "0.1")
     except Exception:
         return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Additive CSV reconciliation
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ReconcileConflict:
+    """
+    A case variant found between an incoming label and an existing project label.
+
+    Both labels share the same comparison_key() (lowercased normalized form) but
+    differ in case or other non-whitespace/unicode detail.  The existing label is
+    kept; the incoming label is skipped.
+
+    When ``systematic`` is True on the parent ``ReconcileResult`` the full list of
+    conflicts likely indicates a whole-CSV casing convention difference rather than
+    isolated typos.
+    """
+    existing_label: str
+    incoming_label: str
+
+
+@dataclass
+class ReconcileResult:
+    """
+    Summary of one additive CSV import against the current project state.
+
+    Intended to be shown to the user as a brief report before any further action.
+
+    Attributes
+    ----------
+    added              Labels that were new and have been added to the project.
+    exact_skipped      Labels identical to existing ones (after normalization) — skipped.
+    case_conflicts     Case variants of existing labels — skipped; existing form kept.
+    systematic_case    True when ≥2 case conflicts exist, suggesting a CSV-level
+                       casing convention mismatch rather than isolated typos.
+    normalization_count  Number of incoming labels that required at least one
+                         normalization step (unicode, whitespace, invisible chars).
+    origin             The CSV filename used to tag all added items.
+    """
+    added:               list[str]
+    exact_skipped:       list[str]
+    case_conflicts:      list[ReconcileConflict]
+    systematic_case:     bool
+    normalization_count: int
+    origin:              str
+
+
+def reconcile_import(
+    project: Project,
+    labels: list[str],
+    origin: str,
+    case_dict: dict[str, str] | None = None,
+) -> ReconcileResult:
+    """
+    Add *labels* to *project* as a subordinate import, treating existing items
+    as master.
+
+    For each incoming label the normalization stack is applied (steps 1-4 always,
+    step 5 when *case_dict* is provided).  Normalized labels are then classified:
+
+    - **Exact duplicate** — comparison_key matches AND normalized forms are equal
+      → skipped; reported in ``ReconcileResult.exact_skipped``
+    - **Case conflict** — comparison_key matches BUT normalized forms differ in case
+      → skipped; existing label kept; reported in ``ReconcileResult.case_conflicts``
+    - **New** — no comparison_key match
+      → added to project with ``item.origin = origin``
+
+    The function mutates *project* directly (adds new ThumbnailItems).  Call it
+    once per CSV in import order; chaining is pairwise — each call's result becomes
+    the new master for the next call.
+
+    Parameters
+    ----------
+    project    The live Project (master).
+    labels     Raw label strings from the incoming CSV (subordinate).
+    origin     Identifier tag for the source — typically the CSV filename stem.
+    case_dict  Optional user-maintained canonical-form mapping (lowercase → display).
+    """
+    # Build lookup from current project: comparison_key → display label
+    existing: dict[str, str] = {
+        comparison_key(item.label): item.label
+        for item in project.content_items
+        if item.label
+    }
+
+    added:          list[str]              = []
+    exact_skipped:  list[str]              = []
+    case_conflicts: list[ReconcileConflict] = []
+    normalization_count = 0
+
+    for raw in labels:
+        normalized, changes = normalize_label(raw, case_dict)
+        if changes:
+            normalization_count += 1
+
+        ckey = normalized.lower()
+
+        if ckey in existing:
+            if normalized == existing[ckey]:
+                exact_skipped.append(normalized)
+            else:
+                case_conflicts.append(
+                    ReconcileConflict(
+                        existing_label=existing[ckey],
+                        incoming_label=normalized,
+                    )
+                )
+        else:
+            # New label — add to project and update lookup so within-CSV dupes
+            # are also caught on subsequent iterations.
+            item = project.add_item(normalized)
+            item.origin = origin
+            existing[ckey] = normalized
+            added.append(normalized)
+
+    return ReconcileResult(
+        added=added,
+        exact_skipped=exact_skipped,
+        case_conflicts=case_conflicts,
+        systematic_case=len(case_conflicts) >= 2,
+        normalization_count=normalization_count,
+        origin=origin,
+    )
+
+
+def reconcile_report_lines(result: ReconcileResult) -> list[str]:
+    """
+    Human-readable summary lines for *result*.  Suitable for print(), a status
+    bar, or an ipywidgets HTML display.  Returns an empty list when nothing
+    noteworthy happened (all labels added, no conflicts, no normalization).
+    """
+    lines: list[str] = []
+
+    if result.added:
+        lines.append(f"  + {len(result.added)} new item(s) added from '{result.origin}'")
+    if result.exact_skipped:
+        lines.append(f"  = {len(result.exact_skipped)} exact duplicate(s) skipped")
+    if result.normalization_count:
+        lines.append(
+            f"  ~ {result.normalization_count} label(s) normalized "
+            "(whitespace / unicode / invisible chars)"
+        )
+    if result.case_conflicts:
+        verb = "[!] systematic" if result.systematic_case else "[!]"
+        lines.append(
+            f"  {verb} {len(result.case_conflicts)} case variant(s) between "
+            f"'{result.origin}' and existing project - existing form kept"
+        )
+        for c in result.case_conflicts:
+            lines.append(f"      kept '{c.existing_label}'  <-  incoming '{c.incoming_label}'")
+    return lines
 
 
 # ---------------------------------------------------------------------------

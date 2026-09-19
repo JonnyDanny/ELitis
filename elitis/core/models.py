@@ -46,6 +46,32 @@ class ImageHash:
 
 
 # ---------------------------------------------------------------------------
+# RenderWarning — structured warning from check_text_fit() or integrity checks
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RenderWarning:
+    """
+    One structured warning produced during rendering or integrity checking.
+
+    Frontends display these differently:
+      Qt      — Warnings panel in Preview tab; clicking a row opens the override modal
+      Colab   — Inline HTML table above the gallery in Cell 4
+      CLI     — stderr, one line per warning
+
+    severity  "warn"  — visible issue but render succeeded as best it could
+              "error" — render output is likely wrong or incomplete
+
+    code      Machine-readable tag; see architecture.md for the full table.
+    message   Human-readable detail shown directly to the user.
+    """
+    item_id:  str
+    severity: str
+    code:     str
+    message:  str
+
+
+# ---------------------------------------------------------------------------
 # SettingField
 # ---------------------------------------------------------------------------
 

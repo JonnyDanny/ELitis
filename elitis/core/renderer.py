@@ -21,7 +21,7 @@ import io
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from elitis.core.models import ResolvedSettings, ThumbnailItem, Project
+from elitis.core.models import ResolvedSettings, ThumbnailItem, Project, RenderWarning
 from elitis.core.font_manager import FontManager
 
 
@@ -85,30 +85,162 @@ def check_source_resolution(path_str: str, cfg: ResolvedSettings) -> str | None:
     return None
 
 
+def check_text_fit(
+    item: ThumbnailItem,
+    project: Project,
+    font_manager: FontManager,
+) -> list[RenderWarning]:
+    """
+    Dry-run the text layout for *item* and return any fit warnings.
+
+    Runs the same layout logic as render_thumbnail but without actually drawing
+    anything, so it is safe to call on all items after a tune step without
+    triggering a full re-render.  Returns an empty list when the label is empty
+    or all checks pass.
+
+    Checks performed (in order):
+      text_word_too_wide  — a single word is wider than the text area at min size
+      text_truncated      — text still overflows after reaching minimum font size
+      text_overflow       — rendered text block extends outside canvas bounds
+      text_ragged         — multi-line: line 2+ uses <60% of line 1 width
+      text_underutilized  — all lines use <40% of available text width
+    """
+    cfg  = project.resolve_item(item)
+    text = _apply_transform(item.label or "", cfg.text_transform)
+    if not text.strip():
+        return []
+
+    pad      = cfg.box_padding
+    usable_w = cfg.canvas_width - pad * 2
+    warnings: list[RenderWarning] = []
+
+    dummy    = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    min_font = font_manager.get_pil_font(cfg.font_name, cfg.font_min_size)
+
+    # -- text_word_too_wide: any word wider than the text area at min size ----
+    for word in text.split():
+        bb = dummy.textbbox((0, 0), word, font=min_font)
+        if bb[2] - bb[0] > usable_w:
+            warnings.append(RenderWarning(
+                item_id=item.id, severity="error",
+                code="text_word_too_wide",
+                message=(
+                    f"Word '{word}' is wider than the text area at minimum "
+                    f"font size ({cfg.font_min_size}px)"
+                ),
+            ))
+            break
+
+    # -- run the actual layout the renderer would use -------------------------
+    font, lines = _fit_text(
+        text, usable_w,
+        cfg.font_name, cfg.font_size, cfg.font_min_size,
+        cfg.font_max_lines, cfg.font_auto_size, font_manager,
+    )
+
+    # -- text_truncated: hit min_size AND lines were still cut ----------------
+    if cfg.font_auto_size and font.size <= cfg.font_min_size:
+        full_lines = _wrap_text(text, min_font, usable_w)
+        cut = len(full_lines) - cfg.font_max_lines
+        if cut > 0:
+            warnings.append(RenderWarning(
+                item_id=item.id, severity="error",
+                code="text_truncated",
+                message=(
+                    f"Text still overflows after reaching minimum font size "
+                    f"({cfg.font_min_size}px) -- {cut} line(s) cut"
+                ),
+            ))
+
+    # -- measure the laid-out lines -------------------------------------------
+    line_bboxes  = [dummy.textbbox((0, 0), ln, font=font) for ln in lines]
+    line_heights = [bb[3] - bb[1] for bb in line_bboxes]
+    line_widths  = [bb[2] - bb[0] for bb in line_bboxes]
+    spacing  = max(4, int(font.size * 0.15))
+    total_h  = sum(line_heights) + spacing * max(0, len(lines) - 1)
+
+    # -- text_overflow: block outside canvas ----------------------------------
+    cy         = int(cfg.canvas_height * cfg.text_y)
+    block_top  = cy - total_h // 2
+    block_bot  = block_top + total_h
+    if block_top < 0 or block_bot > cfg.canvas_height:
+        edge = f"top={block_top}px" if block_top < 0 else f"bottom={block_bot}px"
+        warnings.append(RenderWarning(
+            item_id=item.id, severity="error",
+            code="text_overflow",
+            message=f"Text block extends outside canvas bounds ({edge})",
+        ))
+
+    if line_widths:
+        max_lw = max(line_widths)
+
+        # -- text_underutilized: <40% of usable width -------------------------
+        if max_lw < usable_w * 0.4:
+            pct = max_lw * 100 // usable_w
+            warnings.append(RenderWarning(
+                item_id=item.id, severity="warn",
+                code="text_underutilized",
+                message=f"Text uses only {pct}% of available width",
+            ))
+
+        # -- text_ragged: multi-line with short trailing lines ----------------
+        if len(lines) > 1 and line_widths[0] > usable_w * 0.8:
+            for i, lw in enumerate(line_widths[1:], 1):
+                if lw < line_widths[0] * 0.6:
+                    pct = lw * 100 // max(line_widths[0], 1)
+                    warnings.append(RenderWarning(
+                        item_id=item.id, severity="warn",
+                        code="text_ragged",
+                        message=(
+                            f"Multi-line text: line {i + 1} uses only {pct}% "
+                            "of line 1 width -- consider rewording"
+                        ),
+                    ))
+                    break
+
+    return warnings
+
+
 def render_all(
     project: Project,
     font_manager: FontManager,
     output_dir: Path,
     fmt: str = "PNG",
     on_progress=None,
-) -> list[Path]:
+) -> tuple[list[Path], list[RenderWarning]]:
     """
-    Batch-render every content item to *output_dir* and return the saved paths.
+    Batch-render every content item to *output_dir*.
 
-    *on_progress(done, total, path)* is called after each file is written so callers
-    can update a progress bar or print status without polling.  Pass None to skip it.
+    Returns ``(saved_paths, warnings)`` where *warnings* is the combined list
+    from ``check_text_fit()`` for all items.  Items with no image are rendered
+    as a grey checkerboard and an ``image_missing`` warning is added.
 
-    Output filenames are ``NNN_sanitised_label.ext`` where NNN is zero-padded to
-    three digits.  JPEG output is converted to RGB (alpha channel dropped) before
-    saving because the JPEG format does not support transparency.
+    *on_progress(done, total, path)* is called after each file is written.
+    Pass None to skip it.
+
+    Output filenames are ``NNN_sanitised_label.ext``, NNN zero-padded to three
+    digits.  JPEG output is converted to RGB before saving.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    saved: list[Path] = []
+    saved:    list[Path]          = []
+    warnings: list[RenderWarning] = []
     items = project.content_items
+
     for i, item in enumerate(items):
-        img = render_thumbnail(item, project, font_manager)
+        # image_missing warning
+        if not item.effective_image(project.defaults):
+            warnings.append(RenderWarning(
+                item_id=item.id, severity="error",
+                code="image_missing",
+                message=f"No image assigned — rendered as checkerboard",
+            ))
+
+        # text fit warnings
+        warnings.extend(check_text_fit(item, project, font_manager))
+
+        img  = render_thumbnail(item, project, font_manager)
         safe = _safe_filename(item.label or item.id)
-        ext = "jpg" if fmt.upper() == "JPEG" else fmt.lower()
+        ext  = "jpg" if fmt.upper() == "JPEG" else fmt.lower()
         dest = output_dir / f"{i:03d}_{safe}.{ext}"
         if fmt.upper() == "JPEG":
             img = img.convert("RGB")
@@ -116,7 +248,30 @@ def render_all(
         saved.append(dest)
         if on_progress:
             on_progress(i + 1, len(items), dest)
-    return saved
+
+    return saved, warnings
+
+
+# ---------------------------------------------------------------------------
+# Color suggestion stubs
+# Connection points for future image-based or AI-driven palette tools.
+# Not implemented — raise NotImplementedError.
+# ---------------------------------------------------------------------------
+
+def _suggest_text_color(image: Image.Image) -> tuple:
+    # FUTURE: analyse dominant/average image colours and return a contrasting
+    # text colour as an (R, G, B) tuple.
+    raise NotImplementedError
+
+def _suggest_box_color(image: Image.Image) -> tuple:
+    # FUTURE: suggest a complementary or neutral overlay box colour
+    # derived from the image palette.
+    raise NotImplementedError
+
+def _suggest_box_opacity(image: Image.Image) -> int:
+    # FUTURE: suggest an overlay opacity (0-255) based on the visual busyness
+    # of the image region where the box will be placed.
+    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

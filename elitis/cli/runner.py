@@ -46,7 +46,10 @@ def run_cli_batch(
     def progress(done, total, path):
         print(f"  [{done}/{total}] {path.name}")
 
-    saved_paths = renderer.render_all(project, font_manager, out_dir, fmt=fmt, on_progress=progress)
+    saved_paths, warnings = renderer.render_all(project, font_manager, out_dir, fmt=fmt, on_progress=progress)
+    if warnings:
+        for w in warnings:
+            print(f"  [{w.severity.upper()}] {w.code}: {w.message}", file=sys.stderr)
     print(f"\nDone. {len(saved_paths)} files saved.")
 
 
@@ -91,8 +94,11 @@ def run_cli_interactive(
         return
 
     out_dir = egest_dir / name
-    saved = renderer.render_all(
+    saved, warnings = renderer.render_all(
         project, font_manager, out_dir,
         on_progress=lambda d, t, p: print(f"  [{d}/{t}] {p.name}")
     )
+    if warnings:
+        for w in warnings:
+            print(f"  [{w.severity.upper()}] {w.code}: {w.message}", file=sys.stderr)
     print(f"\nDone. {len(saved)} files in {out_dir}")

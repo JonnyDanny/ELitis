@@ -123,7 +123,7 @@ class TestRenderThumbnail:
 
 class TestRenderAll:
     def test_saves_files(self, small_project, font_manager, tmp_path):
-        paths = renderer.render_all(small_project, font_manager, tmp_path)
+        paths, warnings = renderer.render_all(small_project, font_manager, tmp_path)
         assert len(paths) == 3
         for p in paths:
             assert p.exists()
@@ -136,7 +136,7 @@ class TestRenderAll:
         assert calls[-1] == (3, 3)
 
     def test_jpeg_output(self, small_project, font_manager, tmp_path):
-        paths = renderer.render_all(small_project, font_manager, tmp_path, fmt="JPEG")
+        paths, _ = renderer.render_all(small_project, font_manager, tmp_path, fmt="JPEG")
         for p in paths:
             assert p.suffix == ".jpg"
 
@@ -146,8 +146,16 @@ class TestRenderAll:
         assert out.exists()
 
     def test_returns_empty_for_no_items(self, empty_project, font_manager, tmp_path):
-        paths = renderer.render_all(empty_project, font_manager, tmp_path)
+        paths, warnings = renderer.render_all(empty_project, font_manager, tmp_path)
         assert paths == []
+        assert warnings == []
+
+    def test_image_missing_warning(self, font_manager, tmp_path):
+        from elitis.core.models import Project
+        p = Project.new("t", str(tmp_path))
+        p.add_item("No Image")
+        _, warnings = renderer.render_all(p, font_manager, tmp_path)
+        assert any(w.code == "image_missing" for w in warnings)
 
 
 # ---------------------------------------------------------------------------
