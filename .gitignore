@@ -26,3 +26,6 @@ Fonts/*.ttf
 Fonts/*.otf
 Fonts/*.woff
 Fonts/*.woff2
+
+# Generated test-image cache — created on first run, never committed
+tests/fixtures/generated/

@@ -23,3 +23,8 @@ elitis = "elitis.main:main"
 [tool.setuptools.packages.find]
 where   = ["."]
 include = ["elitis*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: extreme-resolution tests (deselect with -m 'not slow')",
+]

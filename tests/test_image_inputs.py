@@ -1,5 +1,5 @@
 """
-Image corner-case tests.
+Image corner-case and resolution-matrix tests.
 
 Tests the full rendering pipeline and the clipboard-paste image conversion for
 every realistic image input: different modes, sizes, encodings, corrupt data,
@@ -17,6 +17,7 @@ from elitis.core import renderer
 from elitis.core.renderer import _load_background, _apply_framing, _checkerboard
 from elitis.core.models import Project, ThumbnailItem, FIELD_DEFAULTS, ResolvedSettings
 from elitis.ui.app_state import _inspect_clipboard, _try_decode_base64_image
+from tests.generate_test_images import SOURCE_SIZES, SOURCE_SIZES_SLOW
 
 
 # ---------------------------------------------------------------------------
@@ -766,3 +767,55 @@ class TestBase64Decoding:
     def test_data_url_without_base64_marker_returns_none(self):
         """data:image/svg+xml,<svg/> — no ';base64,' → None."""
         assert _try_decode_base64_image("data:image/svg+xml,<svg></svg>") is None
+
+
+# ---------------------------------------------------------------------------
+# Source resolution matrix
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("w,h,desc,seed", SOURCE_SIZES, ids=[s[2] for s in SOURCE_SIZES])
+class TestSourceResolutionMatrix:
+    """
+    Render pipeline survives every source-image size in the standard matrix.
+
+    Images are generated once to tests/fixtures/generated/ (git-ignored) and
+    reused across runs via the source_image_cache fixture.  16 sizes covering
+    small/medium/large square, widescreen, and portrait aspect ratios.
+    """
+
+    def test_renders_correct_canvas_size(self, w, h, desc, seed, source_image_cache,
+                                         empty_project, font_manager):
+        path = source_image_cache(w, h, desc, seed)
+        item = empty_project.add_item(desc.replace("_", " ").title())
+        item.image_path = str(path)
+        result = renderer.render_thumbnail(item, empty_project, font_manager)
+        cfg = empty_project.resolve_item(item)
+        assert result.size == (cfg.canvas_width, cfg.canvas_height)
+
+    def test_all_fit_modes(self, w, h, desc, seed, source_image_cache,
+                           empty_project, font_manager):
+        path = source_image_cache(w, h, desc, seed)
+        item = empty_project.add_item(desc.replace("_", " ").title())
+        item.image_path = str(path)
+        for fit in ("fill", "fit", "stretch", "center", "zoom"):
+            item.settings.get("image_fit").value = fit
+            item.settings.get("image_fit").use_default = False
+            result = renderer.render_thumbnail(item, empty_project, font_manager)
+            cfg = empty_project.resolve_item(item)
+            assert result.size == (cfg.canvas_width, cfg.canvas_height), \
+                f"fit={fit!r} failed for {desc} ({w}x{h})"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("w,h,desc,seed", SOURCE_SIZES_SLOW, ids=[s[2] for s in SOURCE_SIZES_SLOW])
+class TestSourceResolutionMatrixSlow:
+    """Extreme-size variants (5k–10k px).  Run with: pytest -m slow."""
+
+    def test_renders_correct_canvas_size(self, w, h, desc, seed, source_image_cache,
+                                         empty_project, font_manager):
+        path = source_image_cache(w, h, desc, seed)
+        item = empty_project.add_item(desc.replace("_", " ").title())
+        item.image_path = str(path)
+        result = renderer.render_thumbnail(item, empty_project, font_manager)
+        cfg = empty_project.resolve_item(item)
+        assert result.size == (cfg.canvas_width, cfg.canvas_height)

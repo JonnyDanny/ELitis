@@ -11,6 +11,12 @@ from PIL import Image
 from elitis.core.models import Project, ThumbnailItem
 from elitis.core.font_manager import FontManager
 
+# ─── Resolution matrix ────────────────────────────────────────────────────────
+# Generated images are cached in tests/fixtures/generated/ (git-ignored) and
+# only created on the first run that needs them.
+
+_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "generated"
+
 
 @pytest.fixture
 def empty_project() -> Project:
@@ -61,3 +67,24 @@ def tiny_image_file(tmp_path, tiny_rgba_image) -> Path:
     p = tmp_path / "red.png"
     tiny_rgba_image.save(str(p))
     return p
+
+
+@pytest.fixture
+def source_image_cache():
+    """
+    Returns a callable ``(w, h, desc, seed) -> Path``.
+
+    On first call for a given size the image is generated and written to
+    tests/fixtures/generated/.  Subsequent calls (same process or later runs)
+    reuse the cached file — no regeneration.
+    """
+    from tests.generate_test_images import generate_checkerboard
+    _FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _get(w: int, h: int, desc: str, seed: int) -> Path:
+        path = _FIXTURE_DIR / f"{desc}_{w}x{h}.png"
+        if not path.exists():
+            generate_checkerboard(w, h, seed=seed).save(str(path))
+        return path
+
+    return _get
