@@ -35,3 +35,21 @@ multi  word   spacing
 trailing space
    leading space
 
+[IMG] Landscape JPEG busy bg
+[IMG] Portrait tall aspect
+[IMG] Square PNG alpha
+[IMG] Low-res upscale warning
+[IMG] WEBP format ext budget
+[IMG] Dark background overlay
+[IMG] Transparent cutout PNG
+
+[URL] Clean .jpg direct link
+[URL] Query string stripped
+[URL] WEBP via CDN
+[URL] No extension fallback
+
+[PASTE] Screenshot raw pixels
+[PASTE] Browser right-click copy
+[PASTE] URL string → fetch
+[PASTE] base64 data-URL
+[PASTE] Empty clipboard no-op
