@@ -5,6 +5,7 @@ Shows items without images and provides:
   - Bulk upload:  files.upload() → auto-match by filename stem
   - URL download: download an image from a URL into the project dir
   - Manual path:  type an absolute path (for symlinks / mounted drives)
+  - Clipboard:    "Paste image" button per row (all clipboard modes supported)
 
 After assignment, image_hash is computed and stored on the item.
 """
@@ -16,18 +17,39 @@ from pathlib import Path
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
 
 
-def image_panel(project, project_dir: str | Path | None = None) -> None:
+def image_panel(
+    project,
+    project_dir: str | Path | None = None,
+    sourced_dir: str | Path | None = None,
+    project_path: str | Path | None = None,
+) -> None:
     """
     Display the image assignment UI for all unmatched items.
 
-    ``project_dir`` is where uploaded images are saved; defaults to
+    ``project_dir`` is where uploaded/URL-fetched images are saved; defaults to
     /content/project/Images/ in Colab.
+
+    ``sourced_dir`` is where clipboard-pasted images are committed via the
+    atomic ingest pipeline; defaults to ``project_dir/../Ingest/Sourced/``.
+
+    ``project_path`` is the JSON file to auto-save after each assignment.
+    Pass it to survive a Colab VM disconnect without re-doing image work.
     """
     import ipywidgets as w
     from IPython.display import display, HTML
 
     project_dir = Path(project_dir) if project_dir else Path("/content/project/Images")
     project_dir.mkdir(parents=True, exist_ok=True)
+    sourced_dir = Path(sourced_dir) if sourced_dir else project_dir.parent / "Ingest" / "Sourced"
+    _project_path = Path(project_path) if project_path else None
+
+    def _autosave():
+        if _project_path:
+            try:
+                from elitis.core.data_io import save_project
+                save_project(project, _project_path)
+            except Exception:
+                pass
 
     unmatched = [
         item for item in project.content_items
@@ -85,7 +107,24 @@ def image_panel(project, project_dir: str | Path | None = None) -> None:
 
     btn_upload.on_click(_on_upload)
 
-    # ── Per-item URL / path inputs ───────────────────────────────────────────
+    # ── Table refresh — defined here so paste callbacks can call it ─────────
+    table_out = w.Output()
+
+    def _refresh_table():
+        with table_out:
+            table_out.clear_output()
+            still = sum(
+                1 for it in project.content_items
+                if not it.image_path or not Path(it.image_path).exists()
+            )
+            if still == 0:
+                display(HTML("<b style='color:#6f6'>All items have images.</b>"))
+            else:
+                display(HTML(f"<b style='color:#fa0'>{still} item(s) still unmatched.</b>"))
+
+    # ── Per-item URL / path / paste inputs ──────────────────────────────────
+    from elitis.notebook.paste import paste_button
+
     rows_widgets: list[tuple] = []  # (item, url_input, path_input, status_out)
 
     for item in unmatched:
@@ -94,9 +133,9 @@ def image_panel(project, project_dir: str | Path | None = None) -> None:
             f"{item.label or item.id}</span>"
         )
         w_url  = w.Text(placeholder="https://... image URL",
-                        layout=w.Layout(width="320px"))
+                        layout=w.Layout(width="280px"))
         w_path = w.Text(placeholder="or /absolute/path.png",
-                        layout=w.Layout(width="240px"))
+                        layout=w.Layout(width="200px"))
         btn    = w.Button(description="Assign", button_style="", icon="check",
                           layout=w.Layout(width="80px"))
         status = w.Output()
@@ -112,38 +151,38 @@ def image_panel(project, project_dir: str | Path | None = None) -> None:
                         if dest:
                             it.image_path = str(dest)
                             _try_hash(it)
+                            _autosave()
                             print(f"Downloaded -> {dest.name}")
                         else:
                             print("Download failed.")
                     elif path and Path(path).exists():
                         it.image_path = path
                         _try_hash(it)
+                        _autosave()
                         print(f"Assigned {Path(path).name}")
                     else:
                         print("Provide a valid URL or path.")
             return _assign
 
+        def _make_on_pasted(it, st):
+            def _on_pasted(path):
+                it.image_path = str(path)
+                _try_hash(it)
+                _autosave()
+                with st:
+                    st.clear_output()
+                    print(f"Pasted → {path.name}")
+                _refresh_table()
+            return _on_pasted
+
         btn.on_click(_make_assign(item, w_url, w_path, status))
+        btn_paste = paste_button(sourced_dir, _make_on_pasted(item, status))
+
         rows_widgets.append((item, w_url, w_path, status))
         display(w.VBox([
-            w.HBox([lbl, w_url, w_path, btn]),
+            w.HBox([lbl, w_url, w_path, btn, btn_paste]),
             status,
         ]))
-
-    # ── Table refresh placeholder ────────────────────────────────────────────
-    table_out = w.Output()
-
-    def _refresh_table():
-        with table_out:
-            table_out.clear_output()
-            still = sum(
-                1 for it in project.content_items
-                if not it.image_path or not Path(it.image_path).exists()
-            )
-            if still == 0:
-                display(HTML("<b style='color:#6f6'>All items have images.</b>"))
-            else:
-                display(HTML(f"<b style='color:#fa0'>{still} item(s) still unmatched.</b>"))
 
     display(w.VBox([
         w.HBox([btn_upload, out_upload]),

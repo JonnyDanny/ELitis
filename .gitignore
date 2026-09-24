@@ -17,6 +17,9 @@ test_output/
 Ingest/Pasted/*
 !Ingest/Pasted/.gitkeep
 
+# Sourced images — atomic ingest store (user data, content-addressed)
+Ingest/Sourced/
+
 # Project files are user data; track the directory but not its contents
 Projects/*.json
 

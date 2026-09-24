@@ -20,6 +20,7 @@ import textwrap
 import io
 
 from PIL import Image, ImageDraw, ImageFilter
+from PIL.PngImagePlugin import PngInfo
 
 from elitis.core.models import ResolvedSettings, ThumbnailItem, Project, RenderWarning
 from elitis.core.font_manager import FontManager
@@ -201,12 +202,54 @@ def check_text_fit(
     return warnings
 
 
+def preflight_render(
+    project: Project,
+    fmt: str = "PNG",
+    numbered: bool = True,
+) -> list[RenderWarning]:
+    """
+    Return filename-level warnings without rendering anything.
+
+    Runs the same stem-assignment and collision detection that ``render_all``
+    would use, so callers can surface problems (duplicate stems, missing images)
+    before committing to a full render pass.
+
+    Useful in the CLI to print warnings and let the user abort before spending
+    time on a large batch.  The GUI can call this when the user opens the batch
+    export dialog to show a pre-flight summary.
+    """
+    from collections import Counter as _Counter
+    items    = project.content_items
+    ext      = "jpg" if fmt.upper() == "JPEG" else fmt.lower()
+    warnings: list[RenderWarning] = []
+
+    _prefix_overhead = 4 if numbered else 0
+    _ext_overhead    = 1 + len(ext)
+    _gen_budget      = max(20, 60 - _prefix_overhead - _ext_overhead - 2)
+    _raw_check       = [_safe_filename(it.label or it.id, max_len=_gen_budget) for it in items]
+    _max_n           = max((n for n in _Counter(_raw_check).values() if n > 1), default=1)
+    _postfix_reserve = len(f"_{_max_n}")
+    _stem_budget     = max(20, 60 - _prefix_overhead - _ext_overhead - _postfix_reserve)
+    _assign_stems(items, warnings, max_stem=_stem_budget)
+
+    for item in items:
+        if not item.effective_image(project.defaults):
+            warnings.append(RenderWarning(
+                item_id=item.id, severity="error",
+                code="image_missing",
+                message="No image assigned — will render as checkerboard",
+            ))
+
+    return warnings
+
+
 def render_all(
     project: Project,
     font_manager: FontManager,
     output_dir: Path,
     fmt: str = "PNG",
     on_progress=None,
+    numbered: bool = True,
 ) -> tuple[list[Path], list[RenderWarning]]:
     """
     Batch-render every content item to *output_dir*.
@@ -218,38 +261,127 @@ def render_all(
     *on_progress(done, total, path)* is called after each file is written.
     Pass None to skip it.
 
-    Output filenames are ``NNN_sanitised_label.ext``, NNN zero-padded to three
-    digits.  JPEG output is converted to RGB before saving.
+    When *numbered* is True (default) output filenames are ``NNN_stem.ext``,
+    NNN zero-padded to three digits.  When False the prefix is omitted and
+    stem uniqueness is the only guarantee against collisions — colliding stems
+    receive a ``_2`` / ``_3`` postfix automatically.
+
+    JPEG output is converted to RGB before saving.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     saved:    list[Path]          = []
     warnings: list[RenderWarning] = []
     items = project.content_items
 
-    for i, item in enumerate(items):
-        # image_missing warning
+    # Resolve stems once for the whole batch; emits filename_collision warnings.
+    # stem budget = 60 (target) minus fixed overhead so the full filename
+    # stays within that target:
+    #   numbered prefix  "NNN_"   = 4 chars
+    #   collision postfix "_NN"   = up to 3 chars  (counted in _assign_stems)
+    #   extension        ".ext"   = 2–5 chars
+    # All three are well within 255 (NTFS/ext4 limit) even without adjustment,
+    # but the explicit budget keeps filenames predictably short.
+    from collections import Counter as _Counter
+    ext = "jpg" if fmt.upper() == "JPEG" else fmt.lower()
+    _prefix_overhead = 4 if numbered else 0        # "NNN_"
+    _ext_overhead    = 1 + len(ext)                # ".ext"
+    # Dynamic postfix reserve: count actual max collision depth so "_N" always fits.
+    # Quick pass at generous budget (reserve=2) to find max_n; then recompute.
+    _gen_budget  = max(20, 60 - _prefix_overhead - _ext_overhead - 2)
+    _raw_check   = [_safe_filename(it.label or it.id, max_len=_gen_budget) for it in items]
+    _max_n       = max((n for n in _Counter(_raw_check).values() if n > 1), default=1)
+    _postfix_reserve = len(f"_{_max_n}")           # 2 for ≤9, 3 for ≤99, 4 for ≤999, …
+    _stem_budget     = max(20, 60 - _prefix_overhead - _ext_overhead - _postfix_reserve)
+    stems = _assign_stems(items, warnings, max_stem=_stem_budget)
+
+    for i, (item, stem) in enumerate(zip(items, stems)):
+        item_warnings: list[RenderWarning] = []
+
         if not item.effective_image(project.defaults):
-            warnings.append(RenderWarning(
+            item_warnings.append(RenderWarning(
                 item_id=item.id, severity="error",
                 code="image_missing",
                 message=f"No image assigned — rendered as checkerboard",
             ))
 
-        # text fit warnings
-        warnings.extend(check_text_fit(item, project, font_manager))
+        item_warnings.extend(check_text_fit(item, project, font_manager))
+        warnings.extend(item_warnings)
 
-        img  = render_thumbnail(item, project, font_manager)
-        safe = _safe_filename(item.label or item.id)
-        ext  = "jpg" if fmt.upper() == "JPEG" else fmt.lower()
-        dest = output_dir / f"{i:03d}_{safe}.{ext}"
+        img      = render_thumbnail(item, project, font_manager)
+        filename = f"{i:03d}_{stem}.{ext}" if numbered else f"{stem}.{ext}"
+        dest     = output_dir / filename
+
+        # Delete the previous output file if the filename changed (label rename,
+        # collision resolution shift, format change, etc.).
+        if item.last_output_path:
+            old = Path(item.last_output_path)
+            if old != dest and old.exists():
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+
         if fmt.upper() == "JPEG":
             img = img.convert("RGB")
-        img.save(str(dest), format=fmt)
+            img.save(str(dest), format=fmt)
+        elif fmt.upper() == "PNG":
+            img.save(str(dest), format=fmt,
+                     pnginfo=_build_png_meta(item, project, item_warnings))
+        else:
+            img.save(str(dest), format=fmt)
+
+        item.last_output_path = str(dest)
         saved.append(dest)
         if on_progress:
             on_progress(i + 1, len(items), dest)
 
     return saved, warnings
+
+
+# ---------------------------------------------------------------------------
+# PNG metadata
+# ---------------------------------------------------------------------------
+
+def _build_png_meta(
+    item: ThumbnailItem,
+    project: Project,
+    item_warnings: list[RenderWarning],
+) -> PngInfo:
+    """Embed ELItis generation metadata in a PNG tEXt chunk (key: ``elitis``)."""
+    import json as _json
+    from dataclasses import fields as _dc_fields
+    from datetime import datetime as _dt
+
+    try:
+        from importlib.metadata import version as _pkg_version
+        _version = _pkg_version("elitis")
+    except Exception:
+        _version = "0.2.0.dev"
+
+    cfg = project.resolve_item(item)
+    settings_dict: dict = {}
+    for f in _dc_fields(cfg):
+        v = getattr(cfg, f.name)
+        settings_dict[f.name] = list(v) if isinstance(v, tuple) else v
+
+    payload = {
+        "version":     _version,
+        "rendered_at": _dt.now().isoformat(timespec="seconds"),
+        "project":     project.name,
+        "item_id":     item.id,
+        "label":       item.label,
+        "image_path":  item.image_path,
+        "image_hash":  item.image_hash.sha256[:16] if item.image_hash else None,
+        "settings":    settings_dict,
+        "warnings": [
+            {"code": w.code, "severity": w.severity, "message": w.message}
+            for w in item_warnings
+        ],
+    }
+
+    meta = PngInfo()
+    meta.add_text("elitis", _json.dumps(payload, ensure_ascii=False))
+    return meta
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +714,66 @@ def _safe_filename(s: str, max_len: int = 60) -> str:
     """
     safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in s).strip()
     return safe[:max_len] or "item"
+
+
+def _assign_stems(
+    items: list,
+    warnings: list[RenderWarning],
+    max_stem: int = 60,
+) -> list[str]:
+    """
+    Return one filename stem per item, guaranteed unique within the list.
+
+    *max_stem* is the maximum stem length **before** any collision postfix is
+    appended.  ``render_all`` computes this as the target filename budget minus
+    the fixed overhead of the numeric prefix, extension, and worst-case postfix,
+    so the full filename stays within that budget regardless of which options
+    are active.
+
+    When two or more items produce the same sanitised stem the first occurrence
+    keeps the bare stem and subsequent ones receive a ``_2``, ``_3`` … postfix.
+    One ``filename_collision`` warning is emitted per collision group.
+    """
+    from collections import Counter, defaultdict
+
+    raw = [_safe_filename(item.label or item.id, max_len=max_stem) for item in items]
+    counts = Counter(raw)
+    collision_stems = {stem for stem, n in counts.items() if n > 1}
+
+    if not collision_stems:
+        return raw
+
+    # One warning per collision group — list every affected label
+    groups: dict[str, list] = defaultdict(list)
+    for item, stem in zip(items, raw):
+        if stem in collision_stems:
+            groups[stem].append(item)
+
+    for stem, group in groups.items():
+        labels = [it.label or it.id for it in group]
+        warnings.append(RenderWarning(
+            item_id=group[0].id,
+            severity="warn",
+            code="filename_collision",
+            message=(
+                f"{len(group)} labels truncate to the same {len(stem)}-char stem "
+                f'"{stem}" — _2 … _{len(group)} postfixes added to later items. '
+                f"Labels: {', '.join(repr(l) for l in labels)}"
+            ),
+        ))
+
+    # Assign postfixes: first occurrence bare, rest _N
+    counters: dict[str, int] = {}
+    result: list[str] = []
+    for stem in raw:
+        if stem not in collision_stems:
+            result.append(stem)
+        else:
+            n = counters.get(stem, 0) + 1
+            counters[stem] = n
+            result.append(stem if n == 1 else f"{stem}_{n}")
+
+    return result
 
 
 def _checkerboard(w: int, h: int, sq: int = 40) -> Image.Image:

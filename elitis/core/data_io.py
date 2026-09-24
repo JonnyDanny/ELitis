@@ -176,13 +176,14 @@ def _hash_from_dict(d: dict) -> ImageHash:
 def _item_to_dict(item: ThumbnailItem) -> dict:
     """Serialise one ThumbnailItem to a JSON-compatible dict."""
     return {
-        "id":         item.id,
-        "label":      item.label,
-        "image_path": item.image_path,
-        "image_hash": _hash_to_dict(item.image_hash) if item.image_hash else None,
-        "origin":     item.origin,
-        "is_default": item.is_default,
-        "settings":   _settings_to_dict(item.settings),
+        "id":               item.id,
+        "label":            item.label,
+        "image_path":       item.image_path,
+        "image_hash":       _hash_to_dict(item.image_hash) if item.image_hash else None,
+        "origin":           item.origin,
+        "is_default":       item.is_default,
+        "last_output_path": item.last_output_path,
+        "settings":         _settings_to_dict(item.settings),
     }
 
 
@@ -202,6 +203,7 @@ def _item_from_dict(d: dict) -> ThumbnailItem:
         settings=_settings_from_dict(d.get("settings", {})),
         image_hash=_hash_from_dict(raw_hash) if raw_hash else None,
         origin=d.get("origin"),
+        last_output_path=d.get("last_output_path"),
     )
 
 

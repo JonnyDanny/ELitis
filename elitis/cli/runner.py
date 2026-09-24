@@ -50,6 +50,11 @@ def run_cli_batch(
     if warnings:
         for w in warnings:
             print(f"  [{w.severity.upper()}] {w.code}: {w.message}", file=sys.stderr)
+
+    # Persist last_output_path so the next render can clean up stale files.
+    if input_path.suffix.lower() == ".json":
+        data_io.save_project(project, input_path)
+
     print(f"\nDone. {len(saved_paths)} files saved.")
 
 

@@ -244,48 +244,112 @@ class AppState(QObject, BaseAppState):
         self.status_message.emit(f"Render error: {msg}")
 
     # ------------------------------------------------------------------
+    # Qt-specific: ingest helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def sourced_dir(self) -> Path:
+        return self.ingest_dir / "Sourced"
+
+    def ingest_file(self, path: Path) -> Path:
+        """
+        Return a committed path for *path* via the ingest pipeline.
+
+        If *path* is already inside ``ingest_dir`` it is returned as-is —
+        no double-copy.  Otherwise the file's bytes are passed through
+        ``save_sourced_image()`` and the committed path is returned.
+        """
+        from elitis.core.ingest import save_sourced_image
+        try:
+            path.relative_to(self.ingest_dir)
+            return path  # already inside ingest tree
+        except ValueError:
+            pass
+        return save_sourced_image(path.read_bytes(), path.name, self.sourced_dir)
+
+    # ------------------------------------------------------------------
     # Qt-specific: clipboard paste
     # ------------------------------------------------------------------
 
     def paste_image_from_clipboard(self) -> bool:
         """
-        Grab an image from the Qt clipboard, save it to Ingest/Pasted/,
-        and assign it to the current item. Returns True on success.
+        Read the Qt clipboard, ingest whatever image it contains via
+        ``save_sourced_image()``, and assign it to the current item.
+        Returns True on success.
 
-        The QImage is normalised to Format_RGBA8888 before reading its bytes so the
-        raw layout is always R,G,B,A regardless of the original clipboard format or
-        platform endianness (QImage's native Format_ARGB32 stores bytes as B,G,R,A
-        on little-endian, which would silently swap red and blue without this step).
+        Handled categories (in priority order):
+
+        ``image``   — raw QImage pixel data (screenshot, Ctrl+C on an image).
+                      Normalised to RGBA8888 before reading bytes so the layout
+                      is always R,G,B,A regardless of platform endianness.
+        ``base64``  — data: URL text (``data:image/...;base64,...``).
+        ``files``   — local file path(s) on the clipboard (Explorer copy);
+                      the first image file is ingested.
+        ``url``     — HTTP/S URL text pointing at an image; fetched
+                      synchronously with a 15-second timeout.
         """
+        import io
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QImage
-        import datetime, uuid
+        from elitis.core.ingest import save_sourced_image, fetch_url_bytes
 
         cb = QApplication.clipboard()
         category, message = _inspect_clipboard(cb)
 
-        if category == "base64":
-            pil = _try_decode_base64_image(cb.mimeData().text())
-            if pil is None:
-                self.status_message.emit(
-                    "Clipboard has a base64 image but it could not be decoded"
-                )
-                return False
-        elif category == "image":
+        if category == "image":
             qimg = cb.image().convertToFormat(QImage.Format.Format_RGBA8888)
-            ba = bytes(qimg.bits())
-            pil = Image.frombytes("RGBA", (qimg.width(), qimg.height()), ba)
+            pil  = Image.frombytes("RGBA", (qimg.width(), qimg.height()),
+                                   bytes(qimg.bits()))
+            buf  = io.BytesIO()
+            pil.save(buf, format="PNG")
+            data, name, source_url = buf.getvalue(), "clipboard.png", None
+
+        elif category == "base64":
+            import base64 as _b64
+            text = cb.mimeData().text().strip()
+            _, b64_part = text.split(";base64,", 1)
+            try:
+                data = _b64.b64decode(b64_part)
+            except Exception:
+                self.status_message.emit("Clipboard base64 image could not be decoded")
+                return False
+            name, source_url = "clipboard.png", None
+
+        elif category == "files":
+            urls      = cb.mimeData().urls()
+            img_paths = [
+                Path(u.toLocalFile()) for u in urls
+                if u.isLocalFile()
+                and Path(u.toLocalFile()).suffix.lower() in _IMAGE_EXTS
+            ]
+            if not img_paths:
+                self.status_message.emit(message)
+                return False
+            p = img_paths[0]
+            data, name, source_url = p.read_bytes(), p.name, None
+
+        elif category == "url":
+            url = cb.mimeData().text().strip()
+            self.status_message.emit("Fetching image…")
+            data = fetch_url_bytes(url)
+            if data is None:
+                self.status_message.emit(f"Could not fetch: {url}")
+                return False
+            from pathlib import PurePosixPath
+            name       = PurePosixPath(url.split("?")[0]).name or "image.jpg"
+            source_url = url
+
         else:
             self.status_message.emit(message)
             return False
 
-        pasted_dir = self.ingest_dir / "Pasted"
-        pasted_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        uid = uuid.uuid4().hex[:6]
-        dest = pasted_dir / f"pasted_{ts}_{uid}.png"
-        pil.save(str(dest))
+        try:
+            path = save_sourced_image(data, name, self.sourced_dir,
+                                      source_url=source_url)
+        except Exception as exc:
+            self.status_message.emit(f"Ingest failed: {exc}")
+            return False
 
-        self.set_image_for_current(str(dest))
-        self.status_message.emit(f"Pasted image saved: {dest.name}")
+        self.set_image_for_current(str(path))
+        self.status_message.emit(f"Pasted → {path.name}")
         return True

@@ -283,12 +283,13 @@ class DataTab(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose image",
             str(self._state.ingest_dir),
-            "Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*)"
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif);;All files (*)"
         )
         if not path:
             return
 
-        self._state.commit_image(item.id, path)
+        committed = self._state.ingest_file(Path(path))
+        self._state.commit_image(item.id, str(committed))
         self._table.blockSignals(True)
         self._table.setItem(row, _COL_IMAGE, _readonly_item(Path(path).name))
         self._table.blockSignals(False)

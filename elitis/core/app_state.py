@@ -107,6 +107,14 @@ class BaseAppState:
             self._clean_ids.discard(item.id)
         self._on_changed(item)
 
+    def _autosave(self) -> None:
+        """Save to the current project path if one is known, silently."""
+        if self._project_path:
+            try:
+                data_io.save_project(self._project, self._project_path)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
@@ -157,12 +165,14 @@ class BaseAppState:
         if item:
             item.label = label
             self._react(item)
+            self._autosave()
 
     def commit_image(self, item_id: str, path: str | None) -> None:
         item = self._project.find_item(item_id)
         if item:
             item.image_path = path
             self._react(item)
+            self._autosave()
 
     def set_image_for_current(self, path: str) -> None:
         self.commit_image(self.current_item.id, path)
@@ -263,4 +273,5 @@ class BaseAppState:
         )
         self.mark_all_rendered()
         self._on_warnings(warnings)
+        self._autosave()
         return saved, warnings

@@ -307,7 +307,8 @@ class ThumbnailItem:
     settings: ItemSettings
     is_default: bool = False
     image_hash: Optional[ImageHash] = None
-    origin: Optional[str] = None   # CSV filename or project name this item came from
+    origin: Optional[str] = None          # CSV filename or project name this item came from
+    last_output_path: Optional[str] = None  # last file written by render_all; stale file deleted on next render
 
     @classmethod
     def make_defaults(cls) -> ThumbnailItem:
