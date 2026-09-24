@@ -428,6 +428,16 @@ def main():
             break
 
     name, sections = TRACKS[key]
+
+    if key == "1":
+        print()
+        print("  Launch the Qt app alongside the tour? [y/n]: ", end="", flush=True)
+        ch = _getch()
+        if ch in (b"y", b"Y"):
+            import subprocess
+            kwargs = {"creationflags": subprocess.CREATE_NEW_CONSOLE} if sys.platform == "win32" else {}
+            subprocess.Popen([sys.executable, "-m", "elitis"], **kwargs)
+
     _run(sections)
 
 
