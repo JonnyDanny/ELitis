@@ -172,8 +172,8 @@ class AppState(QObject, BaseAppState):
         fonts_dir: Path,
         parent=None,
     ):
-        QObject.__init__(self, parent)
-        BaseAppState.__init__(self, projects_dir, egest_dir, fonts_dir)
+        super().__init__(projects_dir=projects_dir, egest_dir=egest_dir,
+                         fonts_dir=fonts_dir, parent=parent)
         self.ingest_dir = ingest_dir
         self._pool = QThreadPool.globalInstance()
 

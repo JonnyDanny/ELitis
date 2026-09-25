@@ -26,7 +26,9 @@ class BaseAppState:
         projects_dir: Path,
         egest_dir: Path,
         fonts_dir: Path,
+        **kwargs,
     ):
+        super().__init__(**kwargs)   # forwards parent= to QObject in the MRO chain
         self.projects_dir = projects_dir
         self.egest_dir    = egest_dir
 

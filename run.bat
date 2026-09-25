@@ -36,4 +36,10 @@ if errorlevel 1 (
 )
 
 :: ---- Run ----
-"%VENV%\Scripts\python.exe" -m elitis %*
+:: With no args: launch the tour (which offers to open the app alongside).
+:: With any args (e.g. --cli, --batch): pass straight through to elitis.
+if "%~1"=="" (
+    "%VENV%\Scripts\python.exe" tools\tour.py
+) else (
+    "%VENV%\Scripts\python.exe" -m elitis %*
+)
